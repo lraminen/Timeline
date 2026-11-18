@@ -13,6 +13,9 @@ import {
   Rows3,
   GalleryHorizontal,
   LayoutList,
+  Cloud,
+  LogIn,
+  LogOut,
 } from 'lucide-react';
 import { getAllThemes } from '@chronicle/core';
 import type { TimelineSettings } from '@chronicle/schema';
@@ -20,6 +23,7 @@ import { useEditor, selectRedoLabel, selectUndoLabel } from '../store/editor-sto
 import { updateSettings } from '../store/commands.js';
 import { addNewEvent, deleteSelected, duplicateSelected } from '../actions.js';
 import { IconButton } from './ui.js';
+import { useCloud } from '../cloud/cloud-store.js';
 import { isApplePlatform, MOD_KEY } from '../lib/platform.js';
 
 const isMac = isApplePlatform();
@@ -34,16 +38,118 @@ const LAYOUTS: { value: TimelineSettings['layout']; label: string; Icon: typeof 
 const menuItem =
   'flex cursor-default select-none items-center gap-2 rounded px-2 py-1.5 text-sm text-slate-800 outline-none data-[highlighted]:bg-blue-50 data-[highlighted]:text-blue-800';
 
+function PublishButton({ onPublish, onSignIn }: { onPublish: () => void; onSignIn: () => void }) {
+  const api = useCloud((s) => s.api);
+  const user = useCloud((s) => s.user);
+  const role = useEditor((s) => s.remote?.role);
+  if (!api) {
+    return (
+      <span title="Publishing needs a Chronicle server. Use Export to save a file instead.">
+        <button type="button" className="btn-primary" disabled aria-describedby="publish-note">
+          Publish
+        </button>
+        <span id="publish-note" className="sr-only">
+          Publishing needs a Chronicle server; use Export.
+        </span>
+      </span>
+    );
+  }
+  if (!user) {
+    return (
+      <button type="button" className="btn-primary" onClick={onSignIn}>
+        Publish
+      </button>
+    );
+  }
+  return (
+    <button
+      type="button"
+      className="btn-primary"
+      disabled={role === 'viewer'}
+      title={role === 'viewer' ? 'You have view-only access' : undefined}
+      onClick={onPublish}
+    >
+      Publish
+    </button>
+  );
+}
+
+function AccountMenu({
+  onSignIn,
+  onOpenFromServer,
+}: {
+  onSignIn: () => void;
+  onOpenFromServer: () => void;
+}) {
+  const api = useCloud((s) => s.api);
+  const user = useCloud((s) => s.user);
+  const checking = useCloud((s) => s.checking);
+  if (!api) return null;
+  if (checking) return <span className="px-2 text-xs text-slate-600">Connecting…</span>;
+  if (!user) {
+    return (
+      <button type="button" className="btn-ghost" onClick={onSignIn}>
+        <LogIn size={15} aria-hidden /> Sign in
+      </button>
+    );
+  }
+  return (
+    <DropdownMenu.Root>
+      <DropdownMenu.Trigger className="btn-ghost" aria-label={`Account: ${user.name}`}>
+        <span
+          className="flex h-6 w-6 items-center justify-center rounded-full bg-blue-600 text-xs font-semibold text-white"
+          aria-hidden
+        >
+          {user.name.slice(0, 1).toUpperCase()}
+        </span>
+        <ChevronDown size={14} aria-hidden />
+      </DropdownMenu.Trigger>
+      <DropdownMenu.Portal>
+        <DropdownMenu.Content
+          align="end"
+          sideOffset={4}
+          className="z-40 min-w-56 rounded-md border border-slate-200 bg-white p-1 shadow-lg"
+        >
+          <DropdownMenu.Label className="px-2 py-1.5 text-xs text-slate-600">
+            Signed in as <span className="font-medium text-slate-900">{user.email}</span>
+          </DropdownMenu.Label>
+          <DropdownMenu.Item className={menuItem} onSelect={onOpenFromServer}>
+            <Cloud size={15} aria-hidden /> Open from Chronicle…
+          </DropdownMenu.Item>
+          <DropdownMenu.Separator className="my-1 h-px bg-slate-200" />
+          <DropdownMenu.Item
+            className={menuItem}
+            onSelect={() => {
+              const { api: client, setUser } = useCloud.getState();
+              void client?.logout().then(() => {
+                setUser(null);
+              });
+            }}
+          >
+            <LogOut size={15} aria-hidden /> Sign out
+          </DropdownMenu.Item>
+        </DropdownMenu.Content>
+      </DropdownMenu.Portal>
+    </DropdownMenu.Root>
+  );
+}
+
 export function Toolbar({
   onImport,
   onExport,
   onNewTimeline,
   onOpenDrafts,
+  onPublish,
+  onSignIn,
+  onOpenFromServer,
 }: {
   onImport: () => void;
   onExport: (format: 'json' | 'csv') => void;
   onNewTimeline: () => void;
   onOpenDrafts: () => void;
+  onPublish: () => void;
+  onSignIn: () => void;
+  onOpenFromServer: () => void;
 }) {
   const undoLabel = useEditor(selectUndoLabel);
   const redoLabel = useEditor(selectRedoLabel);
@@ -195,14 +301,8 @@ export function Toolbar({
           </DropdownMenu.Portal>
         </DropdownMenu.Root>
 
-        <span title="Publishing requires the Chronicle server (Phase 3). Use Export for now.">
-          <button type="button" className="btn-primary" disabled aria-describedby="publish-note">
-            Publish
-          </button>
-          <span id="publish-note" className="sr-only">
-            Publishing is not available yet; use Export.
-          </span>
-        </span>
+        <PublishButton onPublish={onPublish} onSignIn={onSignIn} />
+        <AccountMenu onSignIn={onSignIn} onOpenFromServer={onOpenFromServer} />
       </div>
     </header>
   );

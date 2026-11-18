@@ -1,11 +1,10 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    "outDir": "dist",
-    "rootDir": "src",
-    "composite": true,
-    "types": ["node"]
+    "lib": ["ES2023"],
+    "types": ["node"],
+    "noEmit": true,
+    "noUncheckedIndexedAccess": true
   },
-  "include": ["src"],
-  "references": [{ "path": "../schema" }]
+  "include": ["src"]
 }

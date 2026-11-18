@@ -28,3 +28,6 @@ Thumbs.db
 .vscode/settings.json
 .idea/
 CHRONICLE_CONTEXT.md
+
+# Server E2E media
+packages/server/e2e-storage/

@@ -4,6 +4,8 @@ import { getOEmbedUrl } from '@chronicle/core';
 import { isSafeMediaUrl, type TimelineMedia } from '@chronicle/schema';
 import { guessMediaType } from '../../lib/import-csv.js';
 import { Field } from '../ui.js';
+import { useCloud } from '../../cloud/cloud-store.js';
+import { useEditor } from '../../store/editor-store.js';
 
 /** Embedded uploads live inside the timeline file until server uploads exist (Phase 3). */
 export const MAX_EMBED_BYTES = 2 * 1024 * 1024;
@@ -197,10 +199,38 @@ export function MediaManager({
     setError(null);
   };
 
+  const api = useCloud((s) => s.api);
+  const user = useCloud((s) => s.user);
+  const remote = useEditor((s) => s.remote);
+  /** Linked + signed in: upload to the server's media pipeline instead of embedding. */
+  const serverUpload =
+    api && user && remote && remote.role !== 'viewer' ? { api, projectId: remote.projectId } : null;
+  const [uploading, setUploading] = useState(false);
+
   const addFile = async (file: File) => {
     const type = file.type.split('/')[0];
     if (type !== 'image' && type !== 'video' && type !== 'audio') {
       setError('Choose an image, video or audio file.');
+      return;
+    }
+    if (serverUpload) {
+      setUploading(true);
+      setError(null);
+      try {
+        const uploaded = await serverUpload.api.uploadMedia(serverUpload.projectId, file);
+        onChange([
+          ...media,
+          {
+            type: uploaded.kind,
+            url: uploaded.url,
+            alt: uploaded.kind === 'image' ? '' : undefined,
+          },
+        ]);
+      } catch (err) {
+        setError(`Upload failed: ${err instanceof Error ? err.message : String(err)}`);
+      } finally {
+        setUploading(false);
+      }
       return;
     }
     if (file.size > MAX_EMBED_BYTES) {
@@ -275,7 +305,12 @@ export function MediaManager({
         </div>
         {/* The (visually hidden) file input is the real, labelled control: one tab stop. */}
         <label className="btn-ghost cursor-pointer px-2 py-1 text-xs focus-within:ring-2 focus-within:ring-blue-600">
-          <Upload size={13} aria-hidden /> Upload a file (max 2 MB)
+          <Upload size={13} aria-hidden />{' '}
+          {uploading
+            ? 'Uploading…'
+            : serverUpload
+              ? 'Upload a file (optimised and stored on Chronicle)'
+              : 'Upload a file (max 2 MB, stored in the timeline)'}
           <input
             type="file"
             accept="image/*,video/*,audio/*"

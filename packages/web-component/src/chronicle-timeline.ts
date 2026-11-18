@@ -138,12 +138,17 @@ export class ChronicleTimeline extends HTMLElement {
 
     const src = this.getAttribute('src');
     const inline = this.getAttribute('data');
+    // CSP-friendly data source: <script type="application/json"> child
+    // (never executed by the browser, so no 'unsafe-inline' is needed).
+    const jsonChild = this.querySelector(':scope > script[type="application/json"]');
     if (this._timelineData) {
       this.renderer.render(this._timelineData);
     } else if (src) {
       void this.fetchTimelineSrc(src);
     } else if (inline) {
       this.parseInlineData(inline);
+    } else if (jsonChild?.textContent) {
+      this.parseInlineData(jsonChild.textContent);
     }
   }
 

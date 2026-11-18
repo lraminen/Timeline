@@ -11,6 +11,14 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./markdown": {
+      "types": "./dist/markdown.d.ts",
+      "import": "./dist/markdown.js"
+    },
+    "./dates": {
+      "types": "./dist/date-engine.d.ts",
+      "import": "./dist/date-engine.js"
     }
   },
   "scripts": {

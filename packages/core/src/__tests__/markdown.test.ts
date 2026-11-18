@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { describe, it, expect } from 'vitest';
 import { renderMarkdown } from '../renderer/markdown.js';
+import { markdownToHtml, markdownToText } from '../markdown.js';
 
 function html(md: string): string {
   const div = document.createElement('div');
@@ -62,5 +63,39 @@ describe('renderMarkdown', () => {
 
   it('handles escaped characters', () => {
     expect(html('\\*not em\\*')).toBe('<p>*not em*</p>');
+  });
+});
+
+describe('markdownToHtml (server-side rendering)', () => {
+  const corpus = [
+    'one\ntwo\n\nthree',
+    'one  \ntwo',
+    '**b** *i* _j_ `c` [NASA](https://nasa.gov)',
+    '- a\n- **b**\n\n1. x\n2. y',
+    '> quoted **bold**\n> more',
+    '## Heading',
+    'Tom & Jerry say "hi" <3',
+    '<img src=x onerror=alert(1)><script>alert(1)</script>',
+    '[x](javascript:alert(1)) [y](https://e.x/?a=1&b="2")',
+    '\\*not em\\*',
+  ];
+
+  it.each(corpus)('matches the DOM renderer structurally for %j', (md) => {
+    const fromDom = html(md);
+    const parsed = document.createElement('div');
+    parsed.innerHTML = markdownToHtml(md);
+    expect(parsed.innerHTML).toBe(fromDom);
+  });
+
+  it('escapes text and attributes', () => {
+    const out = markdownToHtml('<b>"x"</b> [l](https://e.x/?q="><script>)');
+    expect(out).not.toMatch(/<b>|<script/);
+    expect(out).toContain('&lt;b&gt;&quot;x&quot;&lt;/b&gt;');
+  });
+
+  it('produces plain text for meta descriptions', () => {
+    expect(markdownToText('Hello **world**\n\n- [a](https://x.y)\n- b')).toBe(
+      'Hello world\n\na\nb',
+    );
   });
 });

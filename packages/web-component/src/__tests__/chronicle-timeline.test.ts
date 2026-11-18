@@ -118,3 +118,16 @@ describe('<chronicle-timeline>', () => {
     expect(el.data?.title).toBe('Space');
   });
 });
+
+describe('<chronicle-timeline> inline JSON child', () => {
+  it('reads data from a <script type="application/json"> child', () => {
+    const { el } = create();
+    const script = document.createElement('script');
+    script.type = 'application/json';
+    script.textContent = JSON.stringify(VALID).replace(/</g, '\u003c');
+    el.appendChild(script);
+    document.body.appendChild(el);
+    expect(el.data?.title).toBe('Space');
+    expect(el.shadowRoot?.querySelectorAll('.chronicle-event')).toHaveLength(2);
+  });
+});

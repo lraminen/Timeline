@@ -1,5 +1,6 @@
 import { openDB, type DBSchema, type IDBPDatabase } from 'idb';
 import { validateTimeline, type Timeline } from '@chronicle/schema';
+import type { RemoteLink } from '../store/editor-store.js';
 
 /**
  * Local draft storage (IndexedDB). Drafts let the editor work fully offline
@@ -11,9 +12,14 @@ export interface Draft {
   title: string;
   doc: Timeline;
   updatedAt: number;
+  /** Server project this draft syncs with. */
+  remote?: RemoteLink | null;
 }
 
-export type DraftSummary = Omit<Draft, 'doc'> & { eventCount: number };
+export type DraftSummary = Omit<Draft, 'doc' | 'remote'> & {
+  eventCount: number;
+  synced: boolean | null;
+};
 
 interface DraftsDB extends DBSchema {
   drafts: { key: string; value: Draft; indexes: { updatedAt: number } };
@@ -32,9 +38,13 @@ function db(): Promise<IDBPDatabase<DraftsDB>> {
   return dbPromise;
 }
 
-export async function saveDraft(id: string, doc: Timeline): Promise<number> {
+export async function saveDraft(
+  id: string,
+  doc: Timeline,
+  remote: RemoteLink | null = null,
+): Promise<number> {
   const updatedAt = Date.now();
-  await (await db()).put('drafts', { id, title: doc.title, doc, updatedAt });
+  await (await db()).put('drafts', { id, title: doc.title, doc, updatedAt, remote });
   return updatedAt;
 }
 
@@ -52,11 +62,13 @@ export async function loadDraft(id: string): Promise<Draft | null> {
 
 export async function listDrafts(): Promise<DraftSummary[]> {
   const all = await (await db()).getAllFromIndex('drafts', 'updatedAt');
-  return all.reverse().map(({ id, title, updatedAt, doc }) => ({
+  return all.reverse().map(({ id, title, updatedAt, doc, remote }) => ({
     id,
     title,
     updatedAt,
     eventCount: doc.events.length,
+    /** null = local only; false = has unsynced changes; true = in sync. */
+    synced: remote ? !remote.dirty : null,
   }));
 }
 

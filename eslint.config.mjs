@@ -12,7 +12,11 @@ export default tseslint.config(
     languageOptions: {
       parserOptions: {
         projectService: {
-          allowDefaultProject: ['packages/*/vitest.config.ts', 'packages/*/vite.config.ts'],
+          allowDefaultProject: [
+            'packages/*/vitest.config.ts',
+            'packages/*/vite.config.ts',
+            'packages/*/drizzle.config.ts',
+          ],
           defaultProject: 'tsconfig.base.json',
         },
         tsconfigRootDir: import.meta.dirname,
@@ -32,6 +36,12 @@ export default tseslint.config(
         { argsIgnorePattern: '^_', varsIgnorePattern: '^_', caughtErrorsIgnorePattern: '^_' },
       ],
     },
+  },
+  {
+    // Fastify plugins must be async functions even when they register routes
+    // synchronously, so require-await is noise there.
+    files: ['packages/server/src/routes/**/*.ts'],
+    rules: { '@typescript-eslint/require-await': 'off' },
   },
   {
     files: ['**/*.tsx'],

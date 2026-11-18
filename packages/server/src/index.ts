@@ -1,15 +1,15 @@
 /**
- * @chronicle/server
- *
- * REST and GraphQL API server for Chronicle timeline data.
- *
- * This package will contain:
- * - Express/Fastify HTTP server
- * - REST API endpoints for CRUD operations on timelines
- * - GraphQL schema and resolvers
- * - Authentication and authorization middleware
- * - Database integration and data persistence
- * - WebSocket support for real-time collaboration
+ * @chronicle/server — programmatic entry point (for embedding or tests).
+ * Run `chronicle-server` (dist/main.js) to start a standalone server.
  */
-
-export {};
+export { buildApp, type AppOptions, type AppContext, type AuthContext } from './app.js';
+export { loadConfig, type Config } from './config.js';
+export { openDatabase, type Database, type Db } from './db/client.js';
+export {
+  FsStorage,
+  S3Storage,
+  createStorage,
+  type Storage,
+  type CdnInvalidator,
+} from './media/storage.js';
+export { ClamdScanner, noopScanner, type Scanner, type ScanResult } from './media/scanner.js';

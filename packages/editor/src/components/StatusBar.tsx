@@ -2,6 +2,7 @@ import * as Popover from '@radix-ui/react-popover';
 import { CircleAlert, CircleCheck, CloudOff, HardDrive, TriangleAlert } from 'lucide-react';
 import { useIssues, useOnline, type SaveStatus } from '../hooks.js';
 import { useEditor } from '../store/editor-store.js';
+import { CloudStatus } from './cloud/CloudStatus.js';
 
 export function StatusBar({
   save,
@@ -92,6 +93,8 @@ export function StatusBar({
         )}
         {save.state === 'idle' && 'Drafts save automatically'}
       </span>
+
+      <CloudStatus />
 
       <span className="ml-auto flex items-center gap-1">
         {!online && (

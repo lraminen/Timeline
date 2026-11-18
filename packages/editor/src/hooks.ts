@@ -27,15 +27,20 @@ export function useAutosave(enabled: boolean): {
 } {
   const doc = useEditor((s) => s.doc);
   const draftId = useEditor((s) => s.draftId);
+  const remote = useEditor((s) => s.remote);
   const [status, setStatus] = useState<SaveStatus>({ state: 'idle' });
-  const latest = useRef({ doc, draftId });
-  latest.current = { doc, draftId };
+  const latest = useRef({ doc, draftId, remote });
+  latest.current = { doc, draftId, remote };
 
   const saveNow = useMemo(
     () => async () => {
       setStatus({ state: 'saving' });
       try {
-        const at = await saveDraft(latest.current.draftId, latest.current.doc);
+        const at = await saveDraft(
+          latest.current.draftId,
+          latest.current.doc,
+          latest.current.remote,
+        );
         setStatus({ state: 'saved', at });
       } catch (err) {
         setStatus({ state: 'error', message: err instanceof Error ? err.message : String(err) });
@@ -50,7 +55,7 @@ export function useAutosave(enabled: boolean): {
     return () => {
       clearTimeout(timer);
     };
-  }, [doc, draftId, enabled, saveNow]);
+  }, [doc, draftId, remote, enabled, saveNow]);
 
   // Flush on tab close / hide so the last edit is not lost.
   useEffect(() => {

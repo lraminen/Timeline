@@ -7,6 +7,15 @@ import { createBlankTimeline, createSampleTimeline } from './lib/document.js';
 import { latestDraft, loadDraft, requestPersistentStorage } from './lib/drafts.js';
 import { newId } from './lib/ids.js';
 import { MOD_KEY } from './lib/platform.js';
+import { loadEditorConfig } from './lib/api.js';
+import { initCloud, useCloud } from './cloud/cloud-store.js';
+import { useCloudSync } from './cloud/use-cloud-sync.js';
+import { AuthDialog } from './components/cloud/AuthDialog.js';
+import {
+  ConflictDialog,
+  OpenProjectDialog,
+  PublishDialog,
+} from './components/cloud/CloudDialogs.js';
 import { Toolbar } from './components/Toolbar.js';
 import { Sidebar } from './components/sidebar/Sidebar.js';
 import { Inspector } from './components/inspector/Inspector.js';
@@ -23,9 +32,18 @@ export function App({ offlineReady = false }: { offlineReady?: boolean }) {
   const [ready, setReady] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [draftsOpen, setDraftsOpen] = useState(false);
+  const [authOpen, setAuthOpen] = useState(false);
+  const [publishOpen, setPublishOpen] = useState(false);
+  const [openServerOpen, setOpenServerOpen] = useState(false);
   const [issuesOpen, setIssuesOpen] = useState(false);
   const [notice, setNotice] = useState<{ text: string; tone: 'info' | 'error' } | null>(null);
   const { status, saveNow } = useAutosave(ready);
+
+  // Connect to the Chronicle server (if configured) without delaying the editor.
+  useEffect(() => {
+    void loadEditorConfig().then((config) => initCloud(config.apiUrl));
+  }, []);
+  useCloudSync();
 
   // Restore the most recent draft, or start with a sample on first visit.
   useEffect(() => {
@@ -34,7 +52,7 @@ export function App({ offlineReady = false }: { offlineReady?: boolean }) {
       try {
         const draft = await latestDraft();
         if (abort.signal.aborted) return;
-        if (draft) useEditor.getState().load(draft.doc, draft.id);
+        if (draft) useEditor.getState().load(draft.doc, draft.id, draft.remote ?? null);
         else useEditor.getState().load(createSampleTimeline(), newId());
       } catch {
         // IndexedDB unavailable (e.g. private mode): edit in memory.
@@ -80,6 +98,7 @@ export function App({ offlineReady = false }: { offlineReady?: boolean }) {
 
   const switchTo = async (load: () => Promise<void> | void) => {
     await saveNow();
+    useCloud.getState().setConflict(null);
     await load();
   };
 
@@ -116,6 +135,15 @@ export function App({ offlineReady = false }: { offlineReady?: boolean }) {
           }
           onOpenDrafts={() => {
             setDraftsOpen(true);
+          }}
+          onPublish={() => {
+            setPublishOpen(true);
+          }}
+          onSignIn={() => {
+            setAuthOpen(true);
+          }}
+          onOpenFromServer={() => {
+            setOpenServerOpen(true);
           }}
         />
 
@@ -180,13 +208,24 @@ export function App({ offlineReady = false }: { offlineReady?: boolean }) {
           />
         </Suspense>
       )}
+      <AuthDialog open={authOpen} onOpenChange={setAuthOpen} />
+      <PublishDialog open={publishOpen} onOpenChange={setPublishOpen} />
+      <OpenProjectDialog
+        open={openServerOpen}
+        onOpenChange={setOpenServerOpen}
+        beforeOpen={async () => {
+          await saveNow();
+          useCloud.getState().setConflict(null);
+        }}
+      />
+      <ConflictDialog />
       <DraftsDialog
         open={draftsOpen}
         onOpenChange={setDraftsOpen}
         onOpen={(id) =>
           void switchTo(async () => {
             const draft = await loadDraft(id);
-            if (draft) useEditor.getState().load(draft.doc, draft.id);
+            if (draft) useEditor.getState().load(draft.doc, draft.id, draft.remote ?? null);
             setDraftsOpen(false);
           })
         }
