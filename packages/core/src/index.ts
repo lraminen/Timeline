@@ -46,12 +46,14 @@ export {
   registerTheme,
   applyTheme,
   removeTheme,
+  applyThemeOverrides,
   themeToCSSProperties,
   lightTheme,
   darkTheme,
   minimalTheme,
   editorialTheme,
 } from './theme/index.js';
+export { contrastRatio, relativeLuminance, TEXT_CONTRAST_PAIRS } from './theme/contrast.js';
 
 // i18n
 export { createI18n, registerLocale, getAvailableLocales, en, es, ar } from './i18n/index.js';
@@ -68,4 +70,5 @@ export {
 // Renderer
 export { TimelineRenderer } from './renderer/index.js';
 export { BASE_STYLES } from './renderer/styles.js';
+export { renderMarkdown, isSafeHref } from './renderer/markdown.js';
 export { h, setAttributes, clearChildren, createStyleSheet } from './renderer/dom.js';

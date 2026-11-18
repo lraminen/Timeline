@@ -3,6 +3,7 @@ import type { TimelineMedia } from '@chronicle/schema';
 import type { I18nContext } from '../types.js';
 import { resolveMediaType, getOEmbedUrl, isSafeMediaUrl, EMBED_SANDBOX } from '../media.js';
 import { h } from './dom.js';
+import { renderMarkdown } from './markdown.js';
 
 /**
  * Renders a media element. Every URL is re-checked here even though the
@@ -130,7 +131,8 @@ export function renderEventCard(
 
   // Body
   if (event.body) {
-    const bodyEl = h('p', { class: 'chronicle-event__body' }, event.body);
+    const bodyEl = h('div', { class: 'chronicle-event__body' });
+    bodyEl.appendChild(renderMarkdown(event.body));
     card.appendChild(bodyEl);
   }
 

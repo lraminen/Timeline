@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { migrateFromTimelineJS } from '../migrate.js';
+import { migrateFromTimelineJS, migrateFromTimelineJSWithReport } from '../migrate.js';
+import { validateTimeline } from '../validate.js';
 
 // ---------------------------------------------------------------------------
 // Sample TimelineJS v3 payloads
@@ -199,5 +200,65 @@ describe('migrateFromTimelineJS', () => {
     expect(() => migrateFromTimelineJS(null)).toThrow();
     expect(() => migrateFromTimelineJS('string')).toThrow();
     expect(() => migrateFromTimelineJS(42)).toThrow();
+  });
+});
+
+describe('migrateFromTimelineJSWithReport', () => {
+  it('reports skipped events, dropped media and unsupported fields', () => {
+    const { timeline, warnings } = migrateFromTimelineJSWithReport({
+      title: { text: { headline: '<b>Title</b>' }, media: { url: 'https://x.test/a.jpg' } },
+      scale: 'cosmological',
+      events: [
+        { text: { headline: 'No date' } },
+        {
+          start_date: { year: 1990 },
+          text: { headline: 'Bad media', text: '<p>Hello <strong>world</strong></p>' },
+          media: { url: 'javascript:alert(1)' },
+          background: { color: '#000' },
+        },
+      ],
+    });
+
+    expect(timeline.title).toBe('Title');
+    expect(timeline.events).toHaveLength(1);
+    expect(timeline.events[0].media).toEqual([]);
+    expect(timeline.events[0].body).toBe('Hello **world**');
+
+    const byPath = new Map(warnings.map((w) => [w.path, w]));
+    expect(byPath.get('events[0].start_date')?.severity).toBe('warning');
+    expect(byPath.get('events[1].media.url')?.severity).toBe('warning');
+    expect(byPath.get('events[1].background')).toBeDefined();
+    expect(byPath.get('events[1].text.text')?.severity).toBe('info');
+    expect(byPath.get('scale')).toBeDefined();
+    expect(byPath.get('title.media')).toBeDefined();
+  });
+
+  it('maps eras and display dates, and de-duplicates ids', () => {
+    const { timeline, warnings } = migrateFromTimelineJSWithReport({
+      eras: [
+        { start_date: { year: 1939 }, end_date: { year: 1945 }, text: { headline: 'War' } },
+        { start_date: { year: 1950 } },
+      ],
+      events: [
+        { unique_id: 'a', start_date: { year: 1940 }, display_date: 'Spring 1940' },
+        { unique_id: 'a', start_date: { year: 1941 } },
+      ],
+    });
+    expect(timeline.eras).toEqual([
+      expect.objectContaining({ title: 'War', start: '1939', end: '1945' }),
+    ]);
+    expect(timeline.events[0].date.displayOverride).toBe('Spring 1940');
+    expect(timeline.events[0].id).toBe('a');
+    expect(timeline.events[1].id).not.toBe('a');
+    expect(warnings.map((w) => w.path)).toEqual(
+      expect.arrayContaining(['eras[1]', 'events[1].unique_id']),
+    );
+  });
+
+  it('produces documents that pass schema validation', () => {
+    const { timeline } = migrateFromTimelineJSWithReport({
+      events: [{ start_date: { year: -44, month: 3, day: 15 }, text: { headline: 'Ides' } }],
+    });
+    expect(validateTimeline(timeline).success).toBe(true);
   });
 });

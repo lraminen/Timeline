@@ -2,7 +2,7 @@ import { compareDates, type Timeline, type TimelineEvent } from '@chronicle/sche
 import type { RenderOptions, LayoutResult, I18nContext, CardMeasurer } from '../types.js';
 import { sortEvents } from '../date-engine.js';
 import { filterEvents, getUniqueTags, type FilterOptions } from '../search.js';
-import { getTheme, applyTheme } from '../theme/index.js';
+import { getTheme, applyTheme, applyThemeOverrides } from '../theme/index.js';
 import { createI18n } from '../i18n/index.js';
 import { getLayout } from '../layout/index.js';
 import { h, clearChildren } from './dom.js';
@@ -54,6 +54,7 @@ export class TimelineRenderer {
   private cleanupFns: (() => void)[] = [];
   private resizeObserver: ResizeObserver | null = null;
   private pendingFrame: number | null = null;
+  private renderedLayout: RenderOptions['layout'] | null = null;
   /** Measurements from the last layout pass, to ignore no-op resize callbacks. */
   private lastScrollerWidth = -1;
   private lastCardHeights = new WeakMap<Element, number>();
@@ -147,6 +148,35 @@ export class TimelineRenderer {
   }
 
   /**
+   * Marks an event as active and (optionally) scrolls the timeline — not the
+   * host page — so it is in view. Unlike `scrollToEvent`, this never moves
+   * keyboard focus, so hosts such as an editor can sync selection safely.
+   */
+  public highlight(eventId: string | null, options: { scroll?: boolean } = {}): void {
+    if (eventId === null) {
+      this.activeEventId = null;
+      for (const el of this.container.querySelectorAll('.chronicle-event--active')) {
+        el.classList.remove('chronicle-event--active');
+      }
+      for (const el of this.container.querySelectorAll('.chronicle-marker--active')) {
+        el.classList.remove('chronicle-marker--active');
+      }
+      return;
+    }
+    this.highlightEvent(eventId);
+    const card = this.cardById(eventId);
+    if (!options.scroll || !card || !this.shell) return;
+
+    const { scroller } = this.shell;
+    const behavior: ScrollBehavior = this.prefersReducedMotion() ? 'auto' : 'smooth';
+    scroller.scrollTo({
+      top: Math.max(0, card.offsetTop - (scroller.clientHeight - card.offsetHeight) / 2),
+      left: Math.max(0, card.offsetLeft - (scroller.clientWidth - card.offsetWidth) / 2),
+      behavior,
+    });
+  }
+
+  /**
    * Cleans up all DOM listeners and observers.
    */
   public destroy(): void {
@@ -165,12 +195,20 @@ export class TimelineRenderer {
 
     // Preserve focus across a rebuild (e.g. theme or locale change).
     const focusedId = this.focusedCardId();
+    // Keep the reader's place when re-rendering the same layout (e.g. live edits).
+    const previousScroll =
+      this.shell && this.renderedLayout === this.options.layout
+        ? { top: this.shell.scroller.scrollTop, left: this.shell.scroller.scrollLeft }
+        : null;
 
     this.teardown();
     clearChildren(this.container);
 
     const i18n = createI18n(this.options.locale);
-    applyTheme(this.container, getTheme(this.options.theme));
+    applyTheme(
+      this.container,
+      applyThemeOverrides(getTheme(this.options.theme), this.timeline.settings.themeOverrides),
+    );
     this.container.dir = i18n.isRTL() ? 'rtl' : 'ltr';
     this.container.className = `chronicle-container chronicle-container--${this.options.layout}`;
     setAriaAttributes(this.container, this.timeline);
@@ -230,9 +268,16 @@ export class TimelineRenderer {
     this.resizeObserver?.observe(scroller);
 
     this.renderEvents();
+    this.renderedLayout = this.options.layout;
 
+    if (previousScroll) {
+      scroller.scrollTop = previousScroll.top;
+      scroller.scrollLeft = previousScroll.left;
+    }
     if (focusedId) {
       this.cardById(focusedId)?.focus({ preventScroll: true });
+    } else if (previousScroll) {
+      // Position restored above.
     } else if (this.options.startDate) {
       this.scrollToDate(this.options.startDate);
     } else if (this.options.layout === 'horizontal') {

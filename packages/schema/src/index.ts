@@ -16,6 +16,10 @@ export { TimelineEraSchema, type TimelineEra } from './era.js';
 export {
   TimelineSettingsSchema,
   TimelineSchema,
+  ThemeOverridesSchema,
+  THEME_OVERRIDE_COLOR_KEYS,
+  type ThemeOverrides,
+  type ThemeOverrideColorKey,
   type TimelineSettings,
   type Timeline,
 } from './timeline.js';
@@ -29,4 +33,9 @@ export {
   type ValidationFailure,
 } from './validate.js';
 
-export { migrateFromTimelineJS } from './migrate.js';
+export {
+  migrateFromTimelineJS,
+  migrateFromTimelineJSWithReport,
+  type MigrationReport,
+  type MigrationWarning,
+} from './migrate.js';

@@ -1,3 +1,4 @@
+import type { ThemeOverrides } from '@chronicle/schema';
 import type { ThemeTokens } from '../types.js';
 import { themeToCSSProperties } from './tokens.js';
 import { lightTheme } from './light.js';
@@ -58,6 +59,39 @@ export function removeTheme(element: HTMLElement): void {
   for (const prop of toRemove) {
     element.style.removeProperty(prop);
   }
+}
+
+const RADIUS_PRESETS: Record<NonNullable<ThemeOverrides['radius']>, ThemeTokens['borderRadius']> = {
+  none: { sm: '0px', md: '0px', lg: '0px', full: '9999px' },
+  small: { sm: '2px', md: '4px', lg: '6px', full: '9999px' },
+  medium: { sm: '4px', md: '8px', lg: '12px', full: '9999px' },
+  large: { sm: '8px', md: '14px', lg: '20px', full: '9999px' },
+};
+
+/**
+ * Returns `theme` with a timeline's `settings.themeOverrides` applied.
+ * Overrides are schema-validated (`#rrggbb` colours, restricted font names),
+ * and are applied as CSS custom property values, so they cannot inject CSS.
+ */
+export function applyThemeOverrides(theme: ThemeTokens, overrides?: ThemeOverrides): ThemeTokens {
+  if (!overrides) return theme;
+  const colors = { ...theme.colors };
+  for (const [key, value] of Object.entries(overrides.colors ?? {})) {
+    if (value) colors[key as keyof typeof colors] = value;
+  }
+  // Keep derived tokens visually consistent with their overridden sources.
+  if (overrides.colors?.primary && !overrides.colors.marker) colors.marker = colors.primary;
+  if (overrides.colors?.primary) colors.markerActive = colors.primary;
+
+  return {
+    ...theme,
+    name: `${theme.name}+custom`,
+    colors,
+    typography: overrides.fontFamily
+      ? { ...theme.typography, fontFamily: overrides.fontFamily }
+      : theme.typography,
+    borderRadius: overrides.radius ? RADIUS_PRESETS[overrides.radius] : theme.borderRadius,
+  };
 }
 
 export { themeToCSSProperties, lightTheme, darkTheme, minimalTheme, editorialTheme };

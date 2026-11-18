@@ -92,6 +92,19 @@ export class ChronicleTimeline extends HTMLElement {
     this.shadow.appendChild(this.containerEl);
   }
 
+  /**
+   * Marks an event as active (or clears it with `null`), optionally scrolling
+   * it into view inside the timeline. Never moves keyboard focus.
+   */
+  public highlightEvent(eventId: string | null, options: { scroll?: boolean } = {}): void {
+    this.renderer?.highlight(eventId, options);
+  }
+
+  /** Scrolls to an event and moves keyboard focus to it. */
+  public scrollToEvent(eventId: string): void {
+    this.renderer?.scrollToEvent(eventId);
+  }
+
   public get data(): Timeline | null {
     return this._timelineData;
   }

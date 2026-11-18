@@ -106,7 +106,8 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Install Playwright browser
-        run: pnpm --filter @chronicle/web-component exec playwright install --with-deps chromium
+        # One browser install serves both suites (same Playwright version).
+        run: pnpm --filter @chronicle/editor exec playwright install --with-deps chromium
 
       - name: E2E + accessibility tests
         run: pnpm test:e2e
@@ -119,4 +120,5 @@ jobs:
           path: |
             packages/web-component/playwright-report
             packages/web-component/test-results
+            packages/editor/test-results
           retention-days: 7

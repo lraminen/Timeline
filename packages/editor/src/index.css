@@ -1,0 +1,77 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+  body {
+    @apply bg-slate-50 text-slate-900 antialiased;
+  }
+  :focus-visible {
+    @apply outline-none ring-2 ring-blue-600 ring-offset-1;
+  }
+}
+
+@layer components {
+  .input {
+    @apply block w-full rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-sm text-slate-900 placeholder:text-slate-500 focus-visible:border-blue-600 disabled:bg-slate-100;
+  }
+  .input[aria-invalid='true'] {
+    @apply border-red-600;
+  }
+  .label {
+    @apply mb-1 block text-xs font-medium text-slate-700;
+  }
+  .btn {
+    @apply inline-flex items-center justify-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50;
+  }
+  .btn-primary {
+    @apply btn bg-blue-600 text-white hover:bg-blue-700;
+  }
+  .btn-secondary {
+    @apply btn border border-slate-300 bg-white text-slate-800 hover:bg-slate-100;
+  }
+  .btn-ghost {
+    @apply btn text-slate-700 hover:bg-slate-200/70;
+  }
+  .btn-danger {
+    @apply btn border border-red-200 bg-white text-red-700 hover:bg-red-50;
+  }
+  .icon-btn {
+    @apply inline-flex h-8 w-8 items-center justify-center rounded-md text-slate-700 hover:bg-slate-200/70 disabled:cursor-not-allowed disabled:opacity-40;
+  }
+  .panel-heading {
+    @apply text-xs font-semibold uppercase tracking-wide text-slate-600;
+  }
+}
+
+/* Tiptap / ProseMirror */
+.ProseMirror {
+  @apply min-h-[7rem] px-3 py-2 text-sm leading-relaxed outline-none;
+}
+.ProseMirror p {
+  @apply my-1.5;
+}
+.ProseMirror ul {
+  @apply my-1.5 list-disc pl-5;
+}
+.ProseMirror ol {
+  @apply my-1.5 list-decimal pl-5;
+}
+.ProseMirror blockquote {
+  @apply my-1.5 border-l-4 border-slate-300 pl-3 text-slate-700;
+}
+.ProseMirror code {
+  @apply rounded bg-slate-100 px-1 font-mono text-[0.85em];
+}
+.ProseMirror a {
+  @apply text-blue-700 underline;
+}
+.ProseMirror p.is-editor-empty:first-child::before {
+  @apply pointer-events-none float-left h-0 text-slate-500;
+  content: attr(data-placeholder);
+}
