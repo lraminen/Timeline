@@ -14,10 +14,10 @@
   },
   "scripts": {
     "build": "tsc --build",
-    "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@chronicle/core": "workspace:*"
+    "@chronicle/core": "workspace:*",
+    "@chronicle/schema": "workspace:*"
   }
 }

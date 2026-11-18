@@ -12,9 +12,9 @@ assignees: ''
 
 ## Steps to Reproduce
 
-1. 
-2. 
-3. 
+1.
+2.
+3.
 
 ## Expected Behavior
 
@@ -30,10 +30,10 @@ assignees: ''
 
 ## Environment
 
-- **OS:** 
-- **Node.js version:** 
-- **pnpm version:** 
-- **Package/version affected:** 
+- **OS:**
+- **Node.js version:**
+- **pnpm version:**
+- **Package/version affected:**
 
 ## Additional Context
 

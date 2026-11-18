@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { z } from 'zod';
 
 /**
  * Schema for timeline dates supporting partial ISO formats and BCE dates.
@@ -8,34 +8,32 @@ export const TimelineDateSchema = z
     start: z
       .string()
       .describe(
-        'Start date string. Supports partial ISO formats: "YYYY", "YYYY-MM", "YYYY-MM-DD", or full ISO 8601. Negative years represent BCE dates (e.g. "-0044" for 44 BCE).'
+        'Start date string. Supports partial ISO formats: "YYYY", "YYYY-MM", "YYYY-MM-DD", or full ISO 8601. Negative years represent BCE dates (e.g. "-0044" for 44 BCE).',
       ),
     end: z
       .string()
       .optional()
-      .describe(
-        "Optional end date string for date ranges. Same format rules as start."
-      ),
+      .describe('Optional end date string for date ranges. Same format rules as start.'),
     uncertain: z
       .boolean()
       .optional()
       .describe(
-        "Marks the date as uncertain, typically rendered with a question mark or dashed styling."
+        'Marks the date as uncertain, typically rendered with a question mark or dashed styling.',
       ),
     approximate: z
       .boolean()
       .optional()
       .describe(
-        "Marks the date as approximate, typically rendered with a tilde (~) or fuzzy styling."
+        'Marks the date as approximate, typically rendered with a tilde (~) or fuzzy styling.',
       ),
     displayOverride: z
       .string()
       .optional()
       .describe(
-        'Optional human-readable label to show instead of the parsed date, e.g. "The Renaissance" or "circa 1500".'
+        'Optional human-readable label to show instead of the parsed date, e.g. "The Renaissance" or "circa 1500".',
       ),
   })
-  .describe("A date or date range on the timeline, with optional modifiers.");
+  .describe('A date or date range on the timeline, with optional modifiers.');
 
 /** Inferred TypeScript type for a timeline date. */
 export type TimelineDate = z.infer<typeof TimelineDateSchema>;
@@ -82,34 +80,24 @@ export function parseTimelineDate(dateStr: string): string {
 }
 
 /**
- * Extracts a numeric timestamp from a date string for comparison purposes.
- * Handles BCE (negative-year) dates that `Date.parse` cannot.
+ * Extracts a numeric value from a date string for chronological comparison.
+ *
+ * Uses a uniform integer scale for ALL dates (BCE and CE alike):
+ *   `year * 10000 + month * 100 + day`
+ *
+ * This avoids mixing `Date.parse()` epoch-milliseconds (which are negative
+ * before 1970) with the manual scale used for BCE dates — the root cause of
+ * the original sorting bug where 44 BCE sorted *after* 1000 CE.
  */
 function toComparableValue(dateStr: string): number {
   const normalised = parseTimelineDate(dateStr);
 
-  // Handle negative (BCE) years manually.
-  const negMatch = normalised.match(/^(-\d+)-(\d{2})-(\d{2})/);
-  if (negMatch) {
-    const year = parseInt(negMatch[1], 10);
-    const month = parseInt(negMatch[2], 10);
-    const day = parseInt(negMatch[3], 10);
-    // Encode as a single comparable number: year * 10000 + month * 100 + day
-    return year * 10000 + month * 100 + day;
-  }
-
-  // For positive years, try native parsing first.
-  const ts = Date.parse(normalised);
-  if (!Number.isNaN(ts)) {
-    return ts;
-  }
-
-  // Fallback: manual extraction for positive years.
-  const posMatch = normalised.match(/^(\d+)-(\d{2})-(\d{2})/);
-  if (posMatch) {
-    const year = parseInt(posMatch[1], 10);
-    const month = parseInt(posMatch[2], 10);
-    const day = parseInt(posMatch[3], 10);
+  // Match both negative (BCE) and positive years.
+  const match = normalised.match(/^(-?\d+)-(\d{2})-(\d{2})/);
+  if (match) {
+    const year = parseInt(match[1], 10);
+    const month = parseInt(match[2], 10);
+    const day = parseInt(match[3], 10);
     return year * 10000 + month * 100 + day;
   }
 

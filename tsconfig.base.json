@@ -16,15 +16,7 @@
 
     "declaration": true,
     "declarationMap": true,
-    "sourceMap": true,
-    "composite": true,
-
-    "outDir": "dist",
-    "rootDir": "src",
-
-    "paths": {
-      "@chronicle/*": ["./packages/*/src"]
-    }
+    "sourceMap": true
   },
   "exclude": ["node_modules", "dist", "coverage"]
 }

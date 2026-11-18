@@ -1,0 +1,183 @@
+{
+  "schemaVersion": "1.0.0",
+  "id": "space-exploration",
+  "title": "Human Space Exploration",
+  "description": "Key milestones in human exploration of space, from early orbital satellites to interplanetary rovers.",
+  "settings": {
+    "layout": "vertical",
+    "theme": "light",
+    "locale": "en"
+  },
+  "eras": [
+    {
+      "id": "space-race",
+      "title": "The Space Race",
+      "start": "1957",
+      "end": "1975",
+      "color": "rgba(37, 99, 235, 0.08)"
+    },
+    {
+      "id": "modern-era",
+      "title": "International Collaboration",
+      "start": "1976",
+      "end": "2024",
+      "color": "rgba(16, 185, 129, 0.08)"
+    }
+  ],
+  "events": [
+    {
+      "id": "sputnik",
+      "date": {
+        "start": "1957-10-04"
+      },
+      "title": "Sputnik 1 Launch",
+      "body": "The Soviet Union launched Sputnik 1, the first artificial Earth satellite. Its radio signals triggered the dawn of the Space Age.",
+      "media": [
+        {
+          "type": "image",
+          "url": "https://upload.wikimedia.org/wikipedia/commons/b/be/Sputnik_asm.jpg",
+          "alt": "Sputnik 1 satellite replica",
+          "caption": "Replica of the Sputnik 1 satellite"
+        }
+      ],
+      "tags": ["satellite", "ussr", "milestone"],
+      "era": "space-race"
+    },
+    {
+      "id": "gagarin",
+      "date": {
+        "start": "1961-04-12"
+      },
+      "title": "First Human in Space",
+      "body": "Yuri Gagarin became the first human to travel into space, completing one orbit of Earth aboard Vostok 1 in 108 minutes.",
+      "media": [
+        {
+          "type": "image",
+          "url": "https://upload.wikimedia.org/wikipedia/commons/d/df/Yuri_Gagarin_%281961%29_-_detail.jpg",
+          "alt": "Yuri Gagarin portrait",
+          "caption": "Yuri Gagarin in 1961"
+        }
+      ],
+      "tags": ["human-flight", "ussr"],
+      "era": "space-race"
+    },
+    {
+      "id": "apollo-11",
+      "date": {
+        "start": "1969-07-20"
+      },
+      "title": "Apollo 11 Lands on the Moon",
+      "body": "Neil Armstrong and Buzz Aldrin landed the Apollo Lunar Module Eagle on the Moon, stepping onto the surface while Michael Collins orbited above.",
+      "media": [
+        {
+          "type": "image",
+          "url": "https://upload.wikimedia.org/wikipedia/commons/9/98/Aldrin_Apollo_11_original.jpg",
+          "alt": "Buzz Aldrin on the Moon",
+          "caption": "Buzz Aldrin on the surface of the Moon during Apollo 11"
+        }
+      ],
+      "location": {
+        "lat": 0.674,
+        "lng": 23.472,
+        "label": "Sea of Tranquility"
+      },
+      "tags": ["apollo", "moon", "usa"],
+      "era": "space-race"
+    },
+    {
+      "id": "skylab",
+      "date": {
+        "start": "1973-05-14"
+      },
+      "title": "Skylab Launched",
+      "body": "America's first space station was launched into low Earth orbit. It supported three crewed missions that conducted hundreds of medical and scientific experiments.",
+      "media": [
+        {
+          "type": "image",
+          "url": "https://upload.wikimedia.org/wikipedia/commons/0/07/Skylab_in_orbit_1973.jpg",
+          "alt": "Skylab in orbit",
+          "caption": "Skylab space station photographed from departing crew capsule"
+        }
+      ],
+      "tags": ["space-station", "nasa"],
+      "era": "space-race"
+    },
+    {
+      "id": "voyager",
+      "date": {
+        "start": "1977-09-05"
+      },
+      "title": "Voyager 1 Launch",
+      "body": "Voyager 1 was launched on an interstellar trajectory to explore the outer solar system, becoming the farthest human-made object from Earth.",
+      "media": [
+        {
+          "type": "image",
+          "url": "https://upload.wikimedia.org/wikipedia/commons/d/d2/Voyager_spacecraft_model.png",
+          "alt": "Voyager spacecraft model",
+          "caption": "Artist model of the Voyager spacecraft"
+        }
+      ],
+      "tags": ["interstellar", "probes", "nasa"],
+      "era": "modern-era"
+    },
+    {
+      "id": "hubble",
+      "date": {
+        "start": "1990-04-24"
+      },
+      "title": "Hubble Space Telescope Deployed",
+      "body": "The Space Shuttle Discovery deployed the Hubble Space Telescope, providing unprecedented high-resolution astronomical views of deep space.",
+      "media": [
+        {
+          "type": "image",
+          "url": "https://upload.wikimedia.org/wikipedia/commons/3/3f/HST-SM4.jpeg",
+          "alt": "Hubble Space Telescope in orbit",
+          "caption": "Hubble in low Earth orbit after servicing mission"
+        }
+      ],
+      "tags": ["astronomy", "telescope", "nasa", "esa"],
+      "era": "modern-era"
+    },
+    {
+      "id": "iss",
+      "date": {
+        "start": "1998-11-20"
+      },
+      "title": "First ISS Module in Orbit",
+      "body": "The Russian Zarya module was launched into orbit, beginning continuous assembly and over two decades of permanent human habitation in space.",
+      "media": [
+        {
+          "type": "image",
+          "url": "https://upload.wikimedia.org/wikipedia/commons/0/04/International_Space_Station_after_undocking_of_STS-132.jpg",
+          "alt": "International Space Station",
+          "caption": "The International Space Station in orbit"
+        }
+      ],
+      "tags": ["space-station", "international", "milestone"],
+      "era": "modern-era"
+    },
+    {
+      "id": "curiosity",
+      "date": {
+        "start": "2012-08-06"
+      },
+      "title": "Curiosity Rover Lands on Mars",
+      "body": "NASA's Curiosity rover touched down in Gale Crater on Mars using a revolutionary sky crane landing maneuver to search for past habitable environments.",
+      "media": [
+        {
+          "type": "image",
+          "url": "https://upload.wikimedia.org/wikipedia/commons/f/f3/Curiosity_Self-Portrait_at_%27Big_Sky%27.jpg",
+          "alt": "Curiosity Rover selfie on Mars",
+          "caption": "Self-portrait of Curiosity rover on the Martian surface"
+        }
+      ],
+      "location": {
+        "lat": -4.589,
+        "lng": 137.441,
+        "label": "Gale Crater, Mars"
+      },
+      "tags": ["mars", "rover", "nasa"],
+      "era": "modern-era"
+    }
+  ]
+}

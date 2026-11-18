@@ -1,7 +1,7 @@
-import { ZodError } from "zod";
-import { zodToJsonSchema } from "zod-to-json-schema";
-import { TimelineSchema, type Timeline } from "./timeline.js";
-import { TimelineEventSchema, type TimelineEvent } from "./event.js";
+import { ZodError } from 'zod';
+import { zodToJsonSchema } from 'zod-to-json-schema';
+import { TimelineSchema, type Timeline } from './timeline.js';
+import { TimelineEventSchema, type TimelineEvent } from './event.js';
 
 // ---------------------------------------------------------------------------
 // Validation result types
@@ -31,9 +31,7 @@ export type ValidationResult<T> = ValidationSuccess<T> | ValidationFailure;
  * @param data - The raw data to validate.
  * @returns A discriminated union: `{ success: true, data }` or `{ success: false, errors }`.
  */
-export function validateTimeline(
-  data: unknown
-): ValidationResult<Timeline> {
+export function validateTimeline(data: unknown): ValidationResult<Timeline> {
   const result = TimelineSchema.safeParse(data);
   if (result.success) {
     return { success: true, data: result.data };
@@ -47,9 +45,7 @@ export function validateTimeline(
  * @param data - The raw data to validate.
  * @returns A discriminated union: `{ success: true, data }` or `{ success: false, errors }`.
  */
-export function validateEvent(
-  data: unknown
-): ValidationResult<TimelineEvent> {
+export function validateEvent(data: unknown): ValidationResult<TimelineEvent> {
   const result = TimelineEventSchema.safeParse(data);
   if (result.success) {
     return { success: true, data: result.data };
@@ -68,8 +64,5 @@ export function validateEvent(
  * @returns A plain JSON Schema object.
  */
 export function toJsonSchema(): Record<string, unknown> {
-  return zodToJsonSchema(TimelineSchema, "Timeline") as Record<
-    string,
-    unknown
-  >;
+  return zodToJsonSchema(TimelineSchema, 'Timeline') as Record<string, unknown>;
 }
