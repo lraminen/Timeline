@@ -1,0 +1,24 @@
+{
+  "name": "@chronicle/editor",
+  "version": "0.1.0",
+  "description": "Visual timeline editor (React)",
+  "type": "module",
+  "main": "dist/index.js",
+  "module": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc --build",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@chronicle/core": "workspace:*",
+    "@chronicle/schema": "workspace:*"
+  }
+}

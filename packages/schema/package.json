@@ -1,0 +1,59 @@
+{
+  "name": "@chronicle/schema",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    },
+    "./date": {
+      "import": "./dist/date.js",
+      "types": "./dist/date.d.ts"
+    },
+    "./media": {
+      "import": "./dist/media.js",
+      "types": "./dist/media.d.ts"
+    },
+    "./location": {
+      "import": "./dist/location.js",
+      "types": "./dist/location.d.ts"
+    },
+    "./event": {
+      "import": "./dist/event.js",
+      "types": "./dist/event.d.ts"
+    },
+    "./era": {
+      "import": "./dist/era.js",
+      "types": "./dist/era.d.ts"
+    },
+    "./timeline": {
+      "import": "./dist/timeline.js",
+      "types": "./dist/timeline.d.ts"
+    },
+    "./validate": {
+      "import": "./dist/validate.js",
+      "types": "./dist/validate.d.ts"
+    },
+    "./migrate": {
+      "import": "./dist/migrate.js",
+      "types": "./dist/migrate.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "zod": "^3.23.0",
+    "zod-to-json-schema": "^3.23.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.5.0",
+    "vitest": "^2.0.0"
+  }
+}

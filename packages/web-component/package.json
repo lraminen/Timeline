@@ -1,0 +1,23 @@
+{
+  "name": "@chronicle/web-component",
+  "version": "0.1.0",
+  "description": "Framework-agnostic <chronicle-timeline> custom element",
+  "type": "module",
+  "main": "dist/index.js",
+  "module": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc --build",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@chronicle/core": "workspace:*"
+  }
+}
