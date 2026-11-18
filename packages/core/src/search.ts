@@ -1,5 +1,5 @@
-import type { TimelineEvent } from "@chronicle/schema";
-import { compareDates } from "@chronicle/schema";
+import type { TimelineEvent } from '@chronicle/schema';
+import { compareDates } from '@chronicle/schema';
 
 export interface FilterOptions {
   tags?: string[];
@@ -11,10 +11,7 @@ export interface FilterOptions {
 /**
  * Searches events for a query string across title, body, and tags.
  */
-export function searchEvents(
-  events: TimelineEvent[],
-  query: string
-): TimelineEvent[] {
+export function searchEvents(events: TimelineEvent[], query: string): TimelineEvent[] {
   const clean = query.trim().toLowerCase();
   if (!clean) return events;
 
@@ -29,10 +26,7 @@ export function searchEvents(
 /**
  * Applies multi-criteria filters to timeline events (AND logic).
  */
-export function filterEvents(
-  events: TimelineEvent[],
-  filters: FilterOptions
-): TimelineEvent[] {
+export function filterEvents(events: TimelineEvent[], filters: FilterOptions): TimelineEvent[] {
   let result = events;
 
   // Search query filter
@@ -43,9 +37,7 @@ export function filterEvents(
   // Tag filter (event must contain at least one of the selected tags)
   if (filters.tags && filters.tags.length > 0) {
     const tagSet = new Set(filters.tags.map((t) => t.toLowerCase()));
-    result = result.filter((evt) =>
-      evt.tags.some((t) => tagSet.has(t.toLowerCase()))
-    );
+    result = result.filter((evt) => evt.tags.some((t) => tagSet.has(t.toLowerCase())));
   }
 
   // Era filter
@@ -91,7 +83,7 @@ export function getUniqueTags(events: TimelineEvent[]): string[] {
 export function getUniqueEras(events: TimelineEvent[]): string[] {
   const set = new Set<string>();
   for (const evt of events) {
-    if (evt.era && evt.era.trim()) {
+    if (evt.era?.trim()) {
       set.add(evt.era.trim());
     }
   }

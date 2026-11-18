@@ -93,7 +93,7 @@ function toComparableValue(dateStr: string): number {
   const normalised = parseTimelineDate(dateStr);
 
   // Match both negative (BCE) and positive years.
-  const match = normalised.match(/^(-?\d+)-(\d{2})-(\d{2})/);
+  const match = /^(-?\d+)-(\d{2})-(\d{2})/.exec(normalised);
   if (match) {
     const year = parseInt(match[1], 10);
     const month = parseInt(match[2], 10);

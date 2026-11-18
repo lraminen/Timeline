@@ -1,0 +1,12 @@
+# Keep LF everywhere so Prettier (endOfLine: lf) passes on every OS,
+# regardless of a contributor's core.autocrlf setting.
+* text=auto eol=lf
+
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.ico binary
+*.woff binary
+*.woff2 binary

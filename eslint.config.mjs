@@ -10,9 +10,26 @@ export default tseslint.config(
   {
     languageOptions: {
       parserOptions: {
-        projectService: true,
+        projectService: {
+          allowDefaultProject: ['packages/*/vitest.config.ts', 'packages/*/vite.config.ts'],
+          defaultProject: 'tsconfig.base.json',
+        },
         tsconfigRootDir: import.meta.dirname,
       },
+    },
+    rules: {
+      // `||` on strings intentionally treats "" as missing (e.g. empty attributes).
+      '@typescript-eslint/prefer-nullish-coalescing': [
+        'error',
+        { ignorePrimitives: { string: true } },
+      ],
+      // Numbers in template literals are unambiguous (e.g. `${px}px`).
+      '@typescript-eslint/restrict-template-expressions': ['error', { allowNumber: true }],
+      // Interface-mandated but unused parameters are prefixed with `_`.
+      '@typescript-eslint/no-unused-vars': [
+        'error',
+        { argsIgnorePattern: '^_', varsIgnorePattern: '^_', caughtErrorsIgnorePattern: '^_' },
+      ],
     },
   },
   {

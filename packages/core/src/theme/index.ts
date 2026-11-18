@@ -1,23 +1,23 @@
-import type { ThemeTokens } from "../types.js";
-import { themeToCSSProperties } from "./tokens.js";
-import { lightTheme } from "./light.js";
-import { darkTheme } from "./dark.js";
-import { minimalTheme } from "./minimal.js";
-import { editorialTheme } from "./editorial.js";
+import type { ThemeTokens } from '../types.js';
+import { themeToCSSProperties } from './tokens.js';
+import { lightTheme } from './light.js';
+import { darkTheme } from './dark.js';
+import { minimalTheme } from './minimal.js';
+import { editorialTheme } from './editorial.js';
 
 const themes = new Map<string, ThemeTokens>();
 
 // Register default themes
-themes.set("light", lightTheme);
-themes.set("dark", darkTheme);
-themes.set("minimal", minimalTheme);
-themes.set("editorial", editorialTheme);
+themes.set('light', lightTheme);
+themes.set('dark', darkTheme);
+themes.set('minimal', minimalTheme);
+themes.set('editorial', editorialTheme);
 
 /**
  * Retrieves a theme by name, defaulting to lightTheme if not found.
  */
 export function getTheme(name: string): ThemeTokens {
-  return themes.get(name.toLowerCase()) || lightTheme;
+  return themes.get(name.toLowerCase()) ?? lightTheme;
 }
 
 /**
@@ -50,9 +50,8 @@ export function applyTheme(element: HTMLElement, theme: ThemeTokens): void {
 export function removeTheme(element: HTMLElement): void {
   const inlineStyles = element.style;
   const toRemove: string[] = [];
-  for (let i = 0; i < inlineStyles.length; i++) {
-    const prop = inlineStyles[i];
-    if (prop.startsWith("--chronicle-")) {
+  for (const prop of Array.from(inlineStyles)) {
+    if (prop.startsWith('--chronicle-')) {
       toRemove.push(prop);
     }
   }

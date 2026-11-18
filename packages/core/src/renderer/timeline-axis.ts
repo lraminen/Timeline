@@ -1,75 +1,58 @@
-import type { TimelineEvent, TimelineEra } from "@chronicle/schema";
-import type { LayoutResult, I18nContext } from "../types.js";
-import { getDatePosition, getDateRange } from "../date-engine.js";
-import { h } from "./dom.js";
+import type { TimelineEra } from '@chronicle/schema';
+import type { LayoutResult } from '../types.js';
+import { h } from './dom.js';
 
-export function renderAxis(
-  layoutResult: LayoutResult,
-  events: TimelineEvent[],
-  eras: TimelineEra[],
-  _i18n: I18nContext
-): HTMLElement {
-  const axisContainer = h("div", { class: "chronicle-axis-container" });
+/**
+ * Renders the decorative axis line, era bands and event markers.
+ *
+ * All geometry is applied through the CSSOM (`el.style.x = …`), never through
+ * `style="…"` attribute strings, so it works under a strict CSP without
+ * `'unsafe-inline'`. It also means an invalid era colour is simply rejected by
+ * the browser instead of being able to inject extra declarations.
+ *
+ * The whole layer is `aria-hidden`: dates and order are conveyed by the cards.
+ */
+export function renderAxis(layout: LayoutResult, eras: TimelineEra[]): HTMLElement {
+  const layer = h('div', { class: 'chronicle-axis-container', 'aria-hidden': 'true' });
 
-  if (layoutResult.direction === "vertical" && layoutResult.axisStart.x > 0) {
-    // Vertical axis line
-    const axisLine = h("div", {
-      class: "chronicle-axis chronicle-axis--vertical",
-      style: `left: ${layoutResult.axisStart.x}px; top: ${layoutResult.axisStart.y}px; height: ${
-        layoutResult.axisEnd.y - layoutResult.axisStart.y
-      }px;`,
-    });
-    axisContainer.appendChild(axisLine);
-  } else if (layoutResult.direction === "horizontal") {
-    // Horizontal axis line
-    const axisLine = h("div", {
-      class: "chronicle-axis chronicle-axis--horizontal",
-      style: `top: ${layoutResult.axisStart.y}px; left: ${layoutResult.axisStart.x}px; width: ${
-        layoutResult.axisEnd.x - layoutResult.axisStart.x
-      }px;`,
-    });
-    axisContainer.appendChild(axisLine);
+  if (layout.flow) return layer;
+
+  const { axisStart, axisEnd } = layout;
+  const line = h('div', { class: `chronicle-axis chronicle-axis--${layout.direction}` });
+  line.style.left = px(axisStart.x);
+  line.style.top = px(axisStart.y);
+  if (layout.direction === 'vertical') {
+    line.style.height = px(axisEnd.y - axisStart.y);
+  } else {
+    line.style.width = px(axisEnd.x - axisStart.x);
+  }
+  layer.appendChild(line);
+
+  const erasById = new Map(eras.map((e) => [e.id, e]));
+  for (const band of layout.eraBands ?? []) {
+    const era = erasById.get(band.eraId);
+    if (!era) continue;
+    const el = h(
+      'div',
+      { class: 'chronicle-era-band' },
+      h('span', { class: 'chronicle-era-band__label' }, era.title),
+    );
+    el.style.left = px(band.x);
+    el.style.width = px(band.width);
+    if (era.color) el.style.backgroundColor = era.color;
+    layer.appendChild(el);
   }
 
-  // Era bands (if any and horizontal)
-  if (layoutResult.direction === "horizontal" && eras.length > 0) {
-    const range = getDateRange(events);
-    if (range) {
-      for (const era of eras) {
-        const startPos = getDatePosition(era.start, range.earliest, range.latest);
-        const endPos = getDatePosition(era.end, range.earliest, range.latest);
-
-        const trackWidth = layoutResult.totalWidth - 128;
-        const left = 64 + Math.round(startPos * trackWidth);
-        const width = Math.max(40, Math.round((endPos - startPos) * trackWidth));
-
-        const band = h(
-          "div",
-          {
-            class: "chronicle-era-band",
-            style: `left: ${left}px; width: ${width}px; top: 16px; bottom: 16px; ${
-              era.color ? `background-color: ${era.color};` : ""
-            }`,
-          },
-          h("span", { class: "chronicle-era-band__label" }, era.title)
-        );
-
-        axisContainer.appendChild(band);
-      }
-    }
+  for (const pos of layout.positions) {
+    const marker = h('div', { class: 'chronicle-marker', 'data-event-id': pos.eventId });
+    marker.style.left = px(pos.markerX);
+    marker.style.top = px(pos.markerY);
+    layer.appendChild(marker);
   }
 
-  // Markers
-  for (const pos of layoutResult.positions) {
-    if (pos.side === "center") continue; // No separate markers for centered stacked cards
+  return layer;
+}
 
-    const marker = h("div", {
-      class: "chronicle-marker",
-      "data-event-id": pos.eventId,
-      style: `left: ${pos.markerX}px; top: ${pos.markerY}px;`,
-    });
-    axisContainer.appendChild(marker);
-  }
-
-  return axisContainer;
+function px(n: number): string {
+  return `${Math.round(n)}px`;
 }

@@ -7,7 +7,7 @@ export type {
   ThemeTokens,
   I18nStrings,
   I18nContext,
-} from "./types.js";
+} from './types.js';
 
 // Date engine
 export {
@@ -17,7 +17,7 @@ export {
   getDateRange,
   getDatePosition,
   groupEventsByDate,
-} from "./date-engine.js";
+} from './date-engine.js';
 
 // Search & filter
 export {
@@ -26,7 +26,7 @@ export {
   getUniqueTags,
   getUniqueEras,
   type FilterOptions,
-} from "./search.js";
+} from './search.js';
 
 // Media
 export {
@@ -34,8 +34,10 @@ export {
   getOEmbedUrl,
   isExternalUrl,
   getMediaAspectRatio,
+  isSafeMediaUrl,
+  EMBED_SANDBOX,
   type MediaDisplayType,
-} from "./media.js";
+} from './media.js';
 
 // Theme
 export {
@@ -49,17 +51,10 @@ export {
   darkTheme,
   minimalTheme,
   editorialTheme,
-} from "./theme/index.js";
+} from './theme/index.js';
 
 // i18n
-export {
-  createI18n,
-  registerLocale,
-  getAvailableLocales,
-  en,
-  es,
-  ar,
-} from "./i18n/index.js";
+export { createI18n, registerLocale, getAvailableLocales, en, es, ar } from './i18n/index.js';
 
 // Layout
 export {
@@ -68,9 +63,9 @@ export {
   VerticalLayout,
   HorizontalLayout,
   CardLayout,
-} from "./layout/index.js";
+} from './layout/index.js';
 
 // Renderer
-export { TimelineRenderer } from "./renderer/index.js";
-export { BASE_STYLES } from "./renderer/styles.js";
-export { h, setAttributes, clearChildren, createStyleSheet } from "./renderer/dom.js";
+export { TimelineRenderer } from './renderer/index.js';
+export { BASE_STYLES } from './renderer/styles.js';
+export { h, setAttributes, clearChildren, createStyleSheet } from './renderer/dom.js';

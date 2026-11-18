@@ -1,65 +1,78 @@
-import type { TimelineEvent, TimelineEra } from "@chronicle/schema";
-import type { LayoutEngine, LayoutPosition, LayoutResult, RenderOptions } from "../types.js";
+import type { TimelineEvent, TimelineEra } from '@chronicle/schema';
+import type {
+  CardMeasurer,
+  LayoutEngine,
+  LayoutPosition,
+  LayoutResult,
+  RenderOptions,
+} from '../types.js';
 
+const MOBILE_BREAKPOINT = 640;
+const PADDING_Y = 48;
+const CARD_GAP = 24;
+/** Minimum vertical offset between consecutive cards on opposite sides. */
+const STAGGER = 56;
+const AXIS_GAP = 24;
+const MARKER_OFFSET = 24;
+const ESTIMATED_CARD_HEIGHT = 180;
+
+/**
+ * Centre-axis timeline with cards alternating left/right. Each side is
+ * stacked independently (no overlap); consecutive cards are staggered so
+ * reading order stays chronological. Collapses to one column on narrow widths.
+ */
 export class VerticalLayout implements LayoutEngine {
-  readonly name = "vertical";
+  readonly name = 'vertical';
 
   compute(
     events: TimelineEvent[],
     _eras: TimelineEra[],
     containerWidth: number,
     _containerHeight: number,
-    _options: RenderOptions
+    _options: RenderOptions,
+    measure?: CardMeasurer,
   ): LayoutResult {
-    const isMobile = containerWidth < 640;
-    const paddingY = 48;
-    const cardGap = 32;
-    const estimatedCardHeight = 180;
-
+    const isMobile = containerWidth < MOBILE_BREAKPOINT;
     const axisX = isMobile ? 32 : Math.round(containerWidth / 2);
     const cardWidth = isMobile
-      ? Math.max(220, containerWidth - axisX - 32)
-      : Math.min(460, Math.round(containerWidth * 0.42));
+      ? Math.max(220, containerWidth - axisX - AXIS_GAP - 16)
+      : Math.min(460, Math.round(containerWidth / 2 - AXIS_GAP - 24));
 
     const positions: LayoutPosition[] = [];
-    let currentY = paddingY;
+    const bottom = { left: PADDING_Y - CARD_GAP, right: PADDING_Y - CARD_GAP };
+    let prevY = -Infinity;
 
-    for (let i = 0; i < events.length; i++) {
-      const evt = events[i];
-      let side: "left" | "right" | "center" = "right";
-      let x = 0;
-
-      if (isMobile) {
-        side = "right";
-        x = axisX + 24;
-      } else {
-        side = i % 2 === 0 ? "left" : "right";
-        x = side === "left" ? axisX - cardWidth - 24 : axisX + 24;
-      }
+    events.forEach((evt, i) => {
+      const side: 'left' | 'right' = isMobile || i % 2 === 1 ? 'right' : 'left';
+      const height = measure?.(evt.id, cardWidth) ?? ESTIMATED_CARD_HEIGHT;
+      const y = Math.max(bottom[side] + CARD_GAP, prevY + STAGGER);
+      const x = side === 'left' ? axisX - AXIS_GAP - cardWidth : axisX + AXIS_GAP;
 
       positions.push({
         eventId: evt.id,
         x,
-        y: currentY,
+        y,
         width: cardWidth,
-        height: estimatedCardHeight,
+        height,
         markerX: axisX,
-        markerY: currentY + 24, // Vertically align marker with card header
+        markerY: y + MARKER_OFFSET,
         side,
       });
 
-      currentY += estimatedCardHeight + cardGap;
-    }
+      bottom[side] = y + height;
+      prevY = y;
+    });
 
-    const totalHeight = Math.max(300, currentY + paddingY);
+    const contentBottom = positions.length > 0 ? Math.max(bottom.left, bottom.right) : 0;
+    const totalHeight = Math.max(300, contentBottom + PADDING_Y);
 
     return {
       positions,
-      axisStart: { x: axisX, y: paddingY },
-      axisEnd: { x: axisX, y: totalHeight - paddingY },
+      axisStart: { x: axisX, y: PADDING_Y },
+      axisEnd: { x: axisX, y: totalHeight - PADDING_Y },
       totalWidth: containerWidth,
       totalHeight,
-      direction: "vertical",
+      direction: 'vertical',
     };
   }
 }

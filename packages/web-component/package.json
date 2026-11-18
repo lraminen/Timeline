@@ -6,18 +6,43 @@
   "main": "dist/index.js",
   "module": "dist/index.js",
   "types": "dist/index.d.ts",
+  "unpkg": "dist/cdn/chronicle-timeline.iife.js",
+  "jsdelivr": "dist/cdn/chronicle-timeline.iife.js",
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
-    }
+    },
+    "./cdn": "./dist/cdn/chronicle-timeline.js",
+    "./cdn/iife": "./dist/cdn/chronicle-timeline.iife.js",
+    "./cdn/umd": "./dist/cdn/chronicle-timeline.umd.cjs"
   },
+  "files": [
+    "dist"
+  ],
+  "sideEffects": [
+    "./dist/index.js",
+    "./src/index.ts",
+    "./dist/cdn/*"
+  ],
   "scripts": {
-    "build": "tsc --build",
+    "build": "tsc --build && vite build",
+    "dev": "vite",
+    "test": "vitest run",
+    "test:e2e": "playwright test -c e2e",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@chronicle/core": "workspace:*",
     "@chronicle/schema": "workspace:*"
+  },
+  "devDependencies": {
+    "@axe-core/playwright": "4.10.1",
+    "@playwright/test": "1.49.1",
+    "@types/jsdom": "21.1.7",
+    "jsdom": "25.0.1",
+    "typescript": "^5.7.0",
+    "vite": "5.4.21",
+    "vitest": "^2.1.9"
   }
 }

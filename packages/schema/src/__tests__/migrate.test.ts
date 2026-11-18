@@ -93,13 +93,15 @@ describe('migrateFromTimelineJS', () => {
     const result = migrateFromTimelineJS(sampleTimelineJS);
     const ids = result.events.map((e) => e.id);
     // All IDs should be non-empty strings
-    ids.forEach((id) => expect(id).toBeTruthy());
+    ids.forEach((id) => {
+      expect(id).toBeTruthy();
+    });
     // All IDs should be unique
     expect(new Set(ids).size).toBe(ids.length);
     // IDs should be valid UUIDs (8-4-4-4-12 hex pattern)
-    ids.forEach((id) =>
-      expect(id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i),
-    );
+    ids.forEach((id) => {
+      expect(id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
+    });
   });
 
   it('uses unique_id when provided', () => {

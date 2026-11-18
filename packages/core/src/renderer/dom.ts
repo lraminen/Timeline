@@ -29,13 +29,13 @@ export function h(
  */
 export function setAttributes(
   el: HTMLElement,
-  attrs: Record<string, string | number | boolean | undefined | null>
+  attrs: Record<string, string | number | boolean | undefined | null>,
 ): void {
   for (const [key, val] of Object.entries(attrs)) {
     if (val === undefined || val === null || val === false) {
       el.removeAttribute(key);
     } else if (val === true) {
-      el.setAttribute(key, "");
+      el.setAttribute(key, '');
     } else {
       el.setAttribute(key, String(val));
     }

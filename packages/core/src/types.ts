@@ -1,4 +1,4 @@
-import type { Timeline, TimelineEvent, TimelineEra } from "@chronicle/schema";
+import type { TimelineEvent, TimelineEra } from '@chronicle/schema';
 
 /** Position data for a single event as computed by a layout engine. */
 export interface LayoutPosition {
@@ -9,7 +9,7 @@ export interface LayoutPosition {
   height: number;
   markerX: number;
   markerY: number;
-  side: "left" | "right" | "center";
+  side: 'left' | 'right' | 'center';
 }
 
 /** Full result from a layout computation. */
@@ -19,12 +19,26 @@ export interface LayoutResult {
   axisEnd: { x: number; y: number };
   totalWidth: number;
   totalHeight: number;
-  direction: "vertical" | "horizontal";
+  direction: 'vertical' | 'horizontal';
+  /**
+   * When true, cards flow in normal document order and `positions` are
+   * advisory only (the renderer does not absolutely position cards).
+   */
+  flow?: boolean;
+  /** Pixel extents of era bands along the time axis (horizontal layouts). */
+  eraBands?: { eraId: string; x: number; width: number }[];
 }
+
+/**
+ * Returns the rendered height (px) of an event's card when laid out at the
+ * given width. Supplied by the renderer so layouts use real, not estimated,
+ * card heights. Layouts must fall back to an estimate when it is absent.
+ */
+export type CardMeasurer = (eventId: string, width: number) => number;
 
 /** Options controlling how the timeline renders. */
 export interface RenderOptions {
-  layout: "horizontal" | "vertical" | "card";
+  layout: 'horizontal' | 'vertical' | 'card';
   theme: string;
   locale: string;
   startDate?: string;
@@ -44,7 +58,8 @@ export interface LayoutEngine {
     eras: TimelineEra[],
     containerWidth: number,
     containerHeight: number,
-    options: RenderOptions
+    options: RenderOptions,
+    measure?: CardMeasurer,
   ): LayoutResult;
 }
 
@@ -115,9 +130,15 @@ export interface ThemeTokens {
 /** Locale strings and config for i18n. */
 export interface I18nStrings {
   locale: string;
-  dir: "ltr" | "rtl";
+  dir: 'ltr' | 'rtl';
   search: { placeholder: string; noResults: string; resultsCount: string };
-  controls: { zoomIn: string; zoomOut: string; filterByTag: string; clearFilters: string; allTags: string };
+  controls: {
+    zoomIn: string;
+    zoomOut: string;
+    filterByTag: string;
+    clearFilters: string;
+    allTags: string;
+  };
   event: { readMore: string; collapse: string; media: string; location: string };
   timeline: { loading: string; empty: string; error: string };
   aria: {
@@ -144,12 +165,12 @@ export interface I18nContext {
   strings: I18nStrings;
   formatDate(
     dateStr: string,
-    options?: { partial?: boolean; uncertain?: boolean; approximate?: boolean }
+    options?: { partial?: boolean; uncertain?: boolean; approximate?: boolean },
   ): string;
   formatDateRange(
     start: string,
     end?: string,
-    options?: { uncertain?: boolean; approximate?: boolean }
+    options?: { uncertain?: boolean; approximate?: boolean },
   ): string;
   isRTL(): boolean;
 }

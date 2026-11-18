@@ -6,6 +6,7 @@
   "main": "dist/index.js",
   "module": "dist/index.js",
   "types": "dist/index.d.ts",
+  "sideEffects": false,
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
@@ -21,6 +22,8 @@
     "@chronicle/schema": "workspace:*"
   },
   "devDependencies": {
+    "@types/jsdom": "21.1.7",
+    "jsdom": "25.0.1",
     "typescript": "^5.7.0",
     "vitest": "^2.1.9"
   }

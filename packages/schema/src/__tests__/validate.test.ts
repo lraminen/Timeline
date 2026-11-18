@@ -44,7 +44,7 @@ describe('validateTimeline', () => {
   });
 
   it('fails when title is missing', () => {
-    const { title, ...rest } = validTimelineData();
+    const { title: _title, ...rest } = validTimelineData();
     const result = validateTimeline(rest);
     expect(result.success).toBe(false);
   });
@@ -124,7 +124,7 @@ describe('validateEvent', () => {
   });
 
   it('fails when date is missing', () => {
-    const { date, ...rest } = validEventData();
+    const { date: _date, ...rest } = validEventData();
     const result = validateEvent(rest);
     expect(result.success).toBe(false);
   });

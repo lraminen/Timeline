@@ -1,15 +1,15 @@
-import type { TimelineEvent, TimelineEra } from "@chronicle/schema";
-import type { LayoutEngine, LayoutPosition, LayoutResult, RenderOptions } from "../types.js";
+import type { TimelineEvent, TimelineEra } from '@chronicle/schema';
+import type { LayoutEngine, LayoutPosition, LayoutResult, RenderOptions } from '../types.js';
 
 export class CardLayout implements LayoutEngine {
-  readonly name = "card";
+  readonly name = 'card';
 
   compute(
     events: TimelineEvent[],
     _eras: TimelineEra[],
     containerWidth: number,
     _containerHeight: number,
-    _options: RenderOptions
+    _options: RenderOptions,
   ): LayoutResult {
     const cardMaxWidth = 680;
     const cardWidth = Math.min(containerWidth - 32, cardMaxWidth);
@@ -21,9 +21,7 @@ export class CardLayout implements LayoutEngine {
     const positions: LayoutPosition[] = [];
     let currentY = paddingY;
 
-    for (let i = 0; i < events.length; i++) {
-      const evt = events[i];
-
+    for (const evt of events) {
       positions.push({
         eventId: evt.id,
         x: cardX,
@@ -32,7 +30,7 @@ export class CardLayout implements LayoutEngine {
         height: estimatedCardHeight,
         markerX: cardX,
         markerY: currentY,
-        side: "center",
+        side: 'center',
       });
 
       currentY += estimatedCardHeight + cardGap;
@@ -46,7 +44,10 @@ export class CardLayout implements LayoutEngine {
       axisEnd: { x: 0, y: 0 },
       totalWidth: containerWidth,
       totalHeight,
-      direction: "vertical",
+      direction: 'vertical',
+      // Cards stack in normal flow; the browser sizes them, so the estimated
+      // positions above are informational only.
+      flow: true,
     };
   }
 }

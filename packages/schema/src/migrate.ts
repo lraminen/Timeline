@@ -1,4 +1,3 @@
-import { randomUUID } from 'node:crypto';
 import type { Timeline } from './timeline.js';
 import type { TimelineEvent } from './event.js';
 import type { TimelineMedia } from './media.js';
@@ -44,8 +43,20 @@ interface TimelineJSPayload {
 // Helpers
 // ---------------------------------------------------------------------------
 
+/**
+ * RFC 4122 v4 UUID using the Web Crypto global, so this module runs in both
+ * Node (>=19) and browsers. `randomUUID` is only exposed in secure contexts,
+ * hence the `getRandomValues` fallback for plain-http pages.
+ */
 function nextId(): string {
-  return randomUUID();
+  if (typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  const b = crypto.getRandomValues(new Uint8Array(16));
+  b[6] = (b[6] & 0x0f) | 0x40; // version 4
+  b[8] = (b[8] & 0x3f) | 0x80; // RFC 4122 variant
+  const hex = Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
 /**
@@ -65,7 +76,7 @@ function formatYear(year: number | string): string {
  * string understood by {@link TimelineDateSchema}.
  */
 function convertDate(d: TimelineJSDate | undefined): string | undefined {
-  if (!d || d.year === undefined) return undefined;
+  if (d?.year === undefined) return undefined;
 
   const year = formatYear(d.year);
 
@@ -83,7 +94,7 @@ function convertDate(d: TimelineJSDate | undefined): string | undefined {
  * Returns `undefined` when the input has no usable URL.
  */
 function convertMedia(m: TimelineJSMedia | undefined): TimelineMedia | undefined {
-  if (!m || !m.url) return undefined;
+  if (!m?.url) return undefined;
 
   return {
     type: guessMediaType(m.url),
@@ -160,7 +171,7 @@ export function migrateFromTimelineJS(data: unknown): Timeline {
 
   if (Array.isArray(payload.events)) {
     for (const raw of payload.events) {
-      const evt = convertEvent(raw as TimelineJSEvent);
+      const evt = convertEvent(raw);
       if (evt) events.push(evt);
     }
   }

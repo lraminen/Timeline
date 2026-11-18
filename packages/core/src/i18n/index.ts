@@ -1,15 +1,15 @@
-import type { I18nStrings, I18nContext } from "../types.js";
-import { formatDate as engineFormatDate } from "../date-engine.js";
-import { en } from "./en.js";
-import { es } from "./es.js";
-import { ar } from "./ar.js";
+import type { I18nStrings, I18nContext } from '../types.js';
+import { formatDate as engineFormatDate } from '../date-engine.js';
+import { en } from './en.js';
+import { es } from './es.js';
+import { ar } from './ar.js';
 
 const locales = new Map<string, I18nStrings>();
 
 // Register defaults
-locales.set("en", en);
-locales.set("es", es);
-locales.set("ar", ar);
+locales.set('en', en);
+locales.set('es', es);
+locales.set('ar', ar);
 
 /**
  * Registers a new or custom locale string set.
@@ -29,9 +29,9 @@ export function getAvailableLocales(): string[] {
 /**
  * Creates an active I18nContext for a given locale code.
  */
-export function createI18n(locale: string = "en"): I18nContext {
-  const normLocale = locale.toLowerCase().split("-")[0];
-  const strings = locales.get(normLocale) || locales.get("en") || en;
+export function createI18n(locale = 'en'): I18nContext {
+  const normLocale = locale.toLowerCase().split('-')[0];
+  const strings = locales.get(normLocale) ?? locales.get('en') ?? en;
 
   return {
     strings,
@@ -50,7 +50,7 @@ export function createI18n(locale: string = "en"): I18nContext {
     },
 
     isRTL() {
-      return strings.dir === "rtl";
+      return strings.dir === 'rtl';
     },
   };
 }

@@ -7,8 +7,10 @@ dist/
 # Turbo
 .turbo/
 
-# Test coverage
+# Test coverage / reports
 coverage/
+test-results/
+playwright-report/
 
 # Environment
 .env
@@ -25,3 +27,4 @@ Thumbs.db
 # IDE
 .vscode/settings.json
 .idea/
+CHRONICLE_CONTEXT.md

@@ -64,5 +64,5 @@ export function validateEvent(data: unknown): ValidationResult<TimelineEvent> {
  * @returns A plain JSON Schema object.
  */
 export function toJsonSchema(): Record<string, unknown> {
-  return zodToJsonSchema(TimelineSchema, 'Timeline') as Record<string, unknown>;
+  return zodToJsonSchema(TimelineSchema, 'Timeline');
 }

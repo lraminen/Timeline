@@ -22,10 +22,25 @@ export const BASE_STYLES = `
   flex-direction: column;
   width: 100%;
   height: 100%;
-  overflow-y: auto;
-  overflow-x: hidden;
+  min-height: 320px;
+  overflow: hidden;
   position: relative;
   background-color: var(--chronicle-color-background, #f8fafc);
+}
+
+/* Scrollable area below the toolbar (the toolbar stays put). */
+.chronicle-scroller {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  position: relative;
+  overscroll-behavior: contain;
+}
+
+button:focus-visible,
+.chronicle-search__input:focus-visible {
+  outline: 2px solid var(--chronicle-color-primary, #2563eb);
+  outline-offset: 2px;
 }
 
 /* Screen reader utility */
@@ -51,6 +66,9 @@ export const BASE_STYLES = `
   padding: 8px 16px;
   border-radius: var(--chronicle-radius-md, 8px);
   z-index: 100;
+  border: none;
+  font: inherit;
+  cursor: pointer;
   text-decoration: none;
   font-weight: var(--chronicle-font-weight-medium, 500);
   transition: top var(--chronicle-transition-fast, 150ms ease-in-out);
@@ -69,8 +87,8 @@ export const BASE_STYLES = `
   padding: 16px 24px;
   background-color: var(--chronicle-color-surface, #ffffff);
   border-bottom: 1px solid var(--chronicle-color-border, #e2e8f0);
-  position: sticky;
-  top: 0;
+  flex: none;
+  position: relative;
   z-index: 20;
 }
 
@@ -101,8 +119,8 @@ export const BASE_STYLES = `
   left: 12px;
   top: 50%;
   transform: translateY(-50%);
-  width: 14px;
-  height: 14px;
+  width: 16px;
+  height: 16px;
   fill: var(--chronicle-color-text-secondary, #64748b);
   pointer-events: none;
 }
@@ -157,52 +175,41 @@ export const BASE_STYLES = `
   background-color: var(--chronicle-color-surface-alt, #f1f5f9);
 }
 
-/* Timeline viewport / track */
+/* Timeline viewport: sized by the layout; positioning context for cards. */
 .chronicle-viewport {
-  flex: 1;
   position: relative;
   width: 100%;
+  min-width: 100%;
 }
 
-/* Vertical layout */
-.chronicle-container--vertical .chronicle-viewport {
-  padding: 24px 16px;
+/* Decorative layer: axis, era bands, markers (geometry set via CSSOM). */
+.chronicle-axis-container {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.chronicle-axis {
+  position: absolute;
+  background-color: var(--chronicle-color-axis-line, #cbd5e1);
+  z-index: 1;
 }
 
 .chronicle-axis--vertical {
-  position: absolute;
-  top: 48px;
-  bottom: 48px;
   width: 2px;
-  background-color: var(--chronicle-color-axis-line, #cbd5e1);
   transform: translateX(-50%);
-  z-index: 1;
-}
-
-/* Horizontal layout */
-.chronicle-container--horizontal {
-  overflow-x: auto;
-  overflow-y: hidden;
-}
-
-.chronicle-container--horizontal .chronicle-viewport {
-  height: 100%;
-  min-height: 500px;
 }
 
 .chronicle-axis--horizontal {
-  position: absolute;
-  left: 64px;
-  right: 64px;
   height: 2px;
-  background-color: var(--chronicle-color-axis-line, #cbd5e1);
   transform: translateY(-50%);
-  z-index: 1;
 }
 
 /* Era bands */
 .chronicle-era-band {
   position: absolute;
+  top: 8px;
+  bottom: 8px;
   background-color: var(--chronicle-color-era-background, rgba(37, 99, 235, 0.06));
   border-radius: var(--chronicle-radius-md, 8px);
   z-index: 0;
@@ -215,10 +222,16 @@ export const BASE_STYLES = `
   left: 12px;
   font-size: var(--chronicle-font-size-sm, 13px);
   font-weight: var(--chronicle-font-weight-medium, 500);
-  color: var(--chronicle-color-primary, #2563eb);
+  /*
+   * Era colours are user-supplied, so the label sits on its own surface pill
+   * (textSecondary-on-surface is contrast-checked for every built-in theme).
+   */
+  color: var(--chronicle-color-text-secondary, #475569);
+  background-color: var(--chronicle-color-surface, #ffffff);
+  padding: 2px 8px;
+  border-radius: var(--chronicle-radius-full, 9999px);
   text-transform: uppercase;
   letter-spacing: 0.05em;
-  opacity: 0.8;
 }
 
 /* Events */
@@ -272,8 +285,20 @@ export const BASE_STYLES = `
   transform: translate(-50%, -50%) scale(1.3);
 }
 
-/* Card layout overrides */
-.chronicle-container--card .chronicle-viewport {
+/* Horizontal layout: compact cards so both sides of the axis fit. */
+.chronicle-container--horizontal .chronicle-event__body {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  overflow: hidden;
+}
+.chronicle-container--horizontal .chronicle-event__media-caption {
+  display: none;
+}
+
+/* Card layout: normal flow, no absolute positioning. */
+.chronicle-container--card .chronicle-list {
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -324,11 +349,16 @@ export const BASE_STYLES = `
   background-color: var(--chronicle-color-surface-alt, #f1f5f9);
 }
 
+/*
+ * Fixed aspect ratio reserves the media's space before it loads, so card
+ * heights are stable when measured for layout.
+ */
 .chronicle-event__media img,
 .chronicle-event__media video,
 .chronicle-event__media iframe {
   width: 100%;
   height: auto;
+  aspect-ratio: 16 / 9;
   max-height: var(--chronicle-media-max-height, 360px);
   object-fit: cover;
   display: block;
@@ -340,6 +370,13 @@ export const BASE_STYLES = `
   font-size: var(--chronicle-font-size-sm, 13px);
   color: var(--chronicle-color-text-secondary, #64748b);
   background: var(--chronicle-color-surface-alt, #f1f5f9);
+}
+
+.chronicle-event__media-link {
+  display: block;
+  padding: 10px 12px;
+  color: var(--chronicle-color-primary, #2563eb);
+  font-size: var(--chronicle-font-size-sm, 13px);
 }
 
 .chronicle-event__tags {

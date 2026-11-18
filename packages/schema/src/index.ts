@@ -5,6 +5,8 @@ export { TimelineDateSchema, parseTimelineDate, compareDates, type TimelineDate 
 
 export { TimelineMediaSchema, type TimelineMedia } from './media.js';
 
+export { getUrlScheme, isSafeMediaUrl } from './url.js';
+
 export { TimelineLocationSchema, type TimelineLocation } from './location.js';
 
 export { TimelineEventSchema, type TimelineEvent } from './event.js';

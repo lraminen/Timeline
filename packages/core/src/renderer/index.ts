@@ -1,45 +1,67 @@
-import type { Timeline, TimelineEvent } from "@chronicle/schema";
-import type { RenderOptions, LayoutResult } from "../types.js";
-import { sortEvents } from "../date-engine.js";
-import { filterEvents, getUniqueTags, type FilterOptions } from "../search.js";
-import { getTheme, applyTheme } from "../theme/index.js";
-import { createI18n } from "../i18n/index.js";
-import { getLayout } from "../layout/index.js";
-import { h, clearChildren } from "./dom.js";
-import { renderEventCard } from "./event-card.js";
-import { renderAxis } from "./timeline-axis.js";
-import { renderControls } from "./controls.js";
+import { compareDates, type Timeline, type TimelineEvent } from '@chronicle/schema';
+import type { RenderOptions, LayoutResult, I18nContext, CardMeasurer } from '../types.js';
+import { sortEvents } from '../date-engine.js';
+import { filterEvents, getUniqueTags, type FilterOptions } from '../search.js';
+import { getTheme, applyTheme } from '../theme/index.js';
+import { createI18n } from '../i18n/index.js';
+import { getLayout } from '../layout/index.js';
+import { h, clearChildren } from './dom.js';
+import { renderEventCard } from './event-card.js';
+import { renderAxis } from './timeline-axis.js';
+import { renderControls, type ControlsHandle } from './controls.js';
 import {
   setupKeyboardNavigation,
   createLiveRegion,
   announceToScreenReader,
   createSkipLink,
   setAriaAttributes,
-} from "./accessibility.js";
+} from './accessibility.js';
 
+/** Persistent DOM built once per data/option change, reused across filtering. */
+interface Shell {
+  i18n: I18nContext;
+  controls: ControlsHandle;
+  liveRegion: HTMLElement;
+  /** Scrollable area below the toolbar; its width drives the layout. */
+  scroller: HTMLElement;
+  /** Sized to the layout's total extent; positioning context for cards. */
+  viewport: HTMLElement;
+  /** `role="list"` holding only the event cards. */
+  list: HTMLElement;
+}
+
+const MIN_WIDTH = 320;
+
+/**
+ * Renders a timeline into a container element.
+ *
+ * Update strategy:
+ * - `render()` / `update()` rebuild the shell (theme, locale, layout changed).
+ * - Search, tag filters and zoom only re-render the cards (`renderEvents`),
+ *   so the toolbar — and the user's focus within it — persist.
+ * - Size changes only re-run measurement + positioning (`relayout`).
+ */
 export class TimelineRenderer {
   private container: HTMLElement;
   private timeline: Timeline | null = null;
   private options: RenderOptions;
+  /** Options set explicitly by the host; these override `timeline.settings`. */
+  private explicitOptions: Partial<RenderOptions>;
   private activeEventId: string | null = null;
   private filterState: FilterOptions = {};
+  private shell: Shell | null = null;
+  private cards: HTMLElement[] = [];
   private cleanupFns: (() => void)[] = [];
   private resizeObserver: ResizeObserver | null = null;
-  private liveRegion: HTMLElement | null = null;
+  private pendingFrame: number | null = null;
+  /** Measurements from the last layout pass, to ignore no-op resize callbacks. */
+  private lastScrollerWidth = -1;
+  private lastCardHeights = new WeakMap<Element, number>();
 
-  constructor(container: HTMLElement, options?: Partial<RenderOptions>) {
+  constructor(container: HTMLElement, options: Partial<RenderOptions> = {}) {
     this.container = container;
-    this.options = {
-      layout: options?.layout || "vertical",
-      theme: options?.theme || "light",
-      locale: options?.locale || "en",
-      zoomLevel: options?.zoomLevel || 1,
-      reducedMotion: options?.reducedMotion || false,
-      filterTags: options?.filterTags,
-      searchQuery: options?.searchQuery,
-      height: options?.height,
-      width: options?.width,
-    };
+    this.explicitOptions = { ...options };
+    this.options = this.resolveOptions();
 
     if (this.options.filterTags) {
       this.filterState.tags = this.options.filterTags;
@@ -48,14 +70,10 @@ export class TimelineRenderer {
       this.filterState.searchQuery = this.options.searchQuery;
     }
 
-    // Set up resize observer to recompute layout smoothly
-    if (typeof ResizeObserver !== "undefined") {
-      this.resizeObserver = new ResizeObserver(() => {
-        if (this.timeline) {
-          this.draw();
-        }
+    if (typeof ResizeObserver !== 'undefined') {
+      this.resizeObserver = new ResizeObserver((entries) => {
+        this.onResize(entries);
       });
-      this.resizeObserver.observe(this.container);
     }
   }
 
@@ -65,29 +83,15 @@ export class TimelineRenderer {
   public render(timeline: Timeline): void {
     try {
       this.timeline = timeline;
+      this.options = this.resolveOptions();
+      this.rebuild();
 
-      // Merge timeline's built-in settings with options if not overridden
-      if (timeline.settings) {
-        if (!this.options.layout && timeline.settings.layout) {
-          this.options.layout = timeline.settings.layout;
-        }
-        if (!this.options.theme && timeline.settings.theme) {
-          this.options.theme = timeline.settings.theme;
-        }
-        if (!this.options.locale && timeline.settings.locale) {
-          this.options.locale = timeline.settings.locale;
-        }
-      }
-
-      this.draw();
-
-      this.dispatchCustomEvent("chronicle:ready", {
+      this.dispatchCustomEvent('chronicle:ready', {
         timelineId: timeline.id,
         eventCount: timeline.events.length,
       });
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      this.dispatchCustomEvent("chronicle:error", { message: msg });
+      this.reportError(err);
     }
   }
 
@@ -95,7 +99,8 @@ export class TimelineRenderer {
    * Updates rendering options and redraws.
    */
   public update(options: Partial<RenderOptions>): void {
-    this.options = { ...this.options, ...options };
+    this.explicitOptions = { ...this.explicitOptions, ...options };
+    this.options = this.resolveOptions();
     if (options.filterTags !== undefined) {
       this.filterState.tags = options.filterTags;
     }
@@ -103,7 +108,9 @@ export class TimelineRenderer {
       this.filterState.searchQuery = options.searchQuery;
     }
     if (this.timeline) {
-      this.draw();
+      this.safely(() => {
+        this.rebuild();
+      });
     }
   }
 
@@ -126,222 +133,403 @@ export class TimelineRenderer {
    */
   public scrollToEvent(eventId: string): void {
     this.activeEventId = eventId;
-    const card = this.container.querySelector(
-      `[data-event-id="${eventId}"]`
-    ) as HTMLElement | null;
+    const card = this.cardById(eventId);
+    if (!card) return;
 
-    if (card) {
-      card.scrollIntoView({
-        behavior: this.options.reducedMotion ? "auto" : "smooth",
-        block: "center",
-        inline: "center",
-      });
-      card.focus();
-      this.highlightEvent(eventId);
-    }
+    card.scrollIntoView({
+      behavior: this.prefersReducedMotion() ? 'auto' : 'smooth',
+      block: 'center',
+      inline: 'center',
+    });
+    card.focus({ preventScroll: true });
+    this.highlightEvent(eventId);
+    this.dispatchCustomEvent('chronicle:navigate', { eventId });
   }
 
   /**
    * Cleans up all DOM listeners and observers.
    */
   public destroy(): void {
-    for (const cleanup of this.cleanupFns) {
-      cleanup();
-    }
-    this.cleanupFns = [];
-    if (this.resizeObserver) {
-      this.resizeObserver.disconnect();
-      this.resizeObserver = null;
-    }
+    this.teardown();
+    this.resizeObserver?.disconnect();
+    this.resizeObserver = null;
     clearChildren(this.container);
   }
 
   // ---------------------------------------------------------------------------
-  // Internal rendering logic
+  // Shell
   // ---------------------------------------------------------------------------
 
-  private draw(): void {
+  private rebuild(): void {
     if (!this.timeline) return;
 
-    // Run cleanups from previous draw
-    for (const cleanup of this.cleanupFns) {
-      cleanup();
-    }
-    this.cleanupFns = [];
+    // Preserve focus across a rebuild (e.g. theme or locale change).
+    const focusedId = this.focusedCardId();
+
+    this.teardown();
     clearChildren(this.container);
 
     const i18n = createI18n(this.options.locale);
-    const theme = getTheme(this.options.theme);
-
-    // Apply theme custom properties
-    applyTheme(this.container, theme);
-
-    // Set container direction & attributes
-    this.container.dir = i18n.isRTL() ? "rtl" : "ltr";
+    applyTheme(this.container, getTheme(this.options.theme));
+    this.container.dir = i18n.isRTL() ? 'rtl' : 'ltr';
     this.container.className = `chronicle-container chronicle-container--${this.options.layout}`;
     setAriaAttributes(this.container, this.timeline);
 
-    // Live region for screen readers
-    this.liveRegion = createLiveRegion();
-    this.container.appendChild(this.liveRegion);
+    const liveRegion = createLiveRegion();
+    const list = h('div', {
+      class: 'chronicle-list',
+      role: 'list',
+      'aria-label': i18n.strings.aria.eventList,
+    });
+    const viewport = h('div', { class: 'chronicle-viewport' }, list);
+    const scroller = h('div', { class: 'chronicle-scroller' }, viewport);
 
-    // Skip link
-    const skipLink = createSkipLink("chronicle-viewport", i18n.strings.aria.skipToContent);
-    this.container.appendChild(skipLink);
+    const skipLink = createSkipLink(i18n.strings.aria.skipToContent, () => this.cards[0] ?? null);
 
-    // Sort and filter events
-    const sorted = sortEvents(this.timeline.events);
-    const filtered = filterEvents(sorted, this.filterState);
-    const allTags = getUniqueTags(this.timeline.events);
-
-    // Controls header
     const controls = renderControls({
-      tags: allTags,
+      tags: getUniqueTags(this.timeline.events),
       currentFilters: this.filterState,
       i18n,
-      showZoom: this.options.layout === "horizontal",
+      showZoom: this.options.layout === 'horizontal',
       onSearch: (query) => {
         this.filterState.searchQuery = query;
-        this.draw();
-        if (this.liveRegion) {
-          const count = filtered.length;
-          announceToScreenReader(
-            this.liveRegion,
-            i18n.strings.search.resultsCount.replace("{count}", String(count))
-          );
-        }
+        this.refreshResults();
       },
       onFilterTag: (tag) => {
-        if (!tag) {
-          delete this.filterState.tags;
-        } else {
+        if (tag) {
           this.filterState.tags = [tag];
+        } else {
+          delete this.filterState.tags;
         }
-        this.draw();
+        this.refreshResults();
       },
       onZoomIn: () => {
-        this.options.zoomLevel = Math.min(3, (this.options.zoomLevel || 1) + 0.25);
-        this.draw();
+        this.setZoom((this.options.zoomLevel ?? 1) + 0.25);
       },
       onZoomOut: () => {
-        this.options.zoomLevel = Math.max(0.5, (this.options.zoomLevel || 1) - 0.25);
-        this.draw();
+        this.setZoom((this.options.zoomLevel ?? 1) - 0.25);
       },
     });
-    this.container.appendChild(controls);
-
-    // Viewport
-    const viewport = h("div", {
-      id: "chronicle-viewport",
-      class: "chronicle-viewport",
-      role: "list",
-      "aria-label": i18n.strings.aria.eventList,
+    this.cleanupFns.push(() => {
+      controls.destroy();
     });
 
-    if (filtered.length === 0) {
-      const emptyEl = h(
-        "div",
-        { class: "chronicle-empty", role: "status" },
-        i18n.strings.search.noResults
-      );
-      viewport.appendChild(emptyEl);
-      this.container.appendChild(viewport);
+    this.container.append(liveRegion, skipLink, controls.element, scroller);
+    this.shell = { i18n, controls, liveRegion, scroller, viewport, list };
+
+    this.cleanupFns.push(
+      setupKeyboardNavigation(
+        list,
+        () => this.cards,
+        (card) => {
+          const id = card.getAttribute('data-event-id');
+          if (id) this.selectEvent(id);
+        },
+      ),
+    );
+    this.resizeObserver?.observe(scroller);
+
+    this.renderEvents();
+
+    if (focusedId) {
+      this.cardById(focusedId)?.focus({ preventScroll: true });
+    } else if (this.options.startDate) {
+      this.scrollToDate(this.options.startDate);
+    } else if (this.options.layout === 'horizontal') {
+      this.centreAxisVertically();
+    }
+  }
+
+  /** Horizontal layout may be taller than the frame; start with the axis in view. */
+  private centreAxisVertically(): void {
+    if (!this.shell) return;
+    const { scroller, viewport } = this.shell;
+    const axis = viewport.querySelector<HTMLElement>('.chronicle-axis--horizontal');
+    if (!axis) return;
+    scroller.scrollTop = Math.max(0, axis.offsetTop - scroller.clientHeight / 2);
+  }
+
+  /** Scrolls the timeline (not the host page) to the first event on/after `date`. */
+  private scrollToDate(date: string): void {
+    if (!this.shell) return;
+    const { scroller } = this.shell;
+    const target =
+      this.cards.find((card) => {
+        const evt = this.timeline?.events.find((e) => e.id === card.dataset.eventId);
+        return evt !== undefined && compareDates(evt.date, { start: date }) >= 0;
+      }) ?? this.cards.at(-1);
+    if (!target) return;
+    if (this.options.layout === 'horizontal') {
+      scroller.scrollLeft = Math.max(0, target.offsetLeft - 32);
+    } else {
+      scroller.scrollTop = Math.max(0, target.offsetTop - 32);
+    }
+  }
+
+  private teardown(): void {
+    if (this.pendingFrame !== null) {
+      cancelAnimationFrame(this.pendingFrame);
+      this.pendingFrame = null;
+    }
+    this.resizeObserver?.disconnect();
+    for (const cleanup of this.cleanupFns) cleanup();
+    this.cleanupFns = [];
+    this.shell = null;
+    this.cards = [];
+  }
+
+  // ---------------------------------------------------------------------------
+  // Events + layout
+  // ---------------------------------------------------------------------------
+
+  /** Re-renders cards for the current filters and announces the result count. */
+  private refreshResults(): void {
+    if (!this.shell) return;
+    const shell = this.shell;
+    this.safely(() => {
+      shell.controls.syncFilters(this.filterState);
+      const count = this.renderEvents();
+      const msg =
+        count === 0
+          ? shell.i18n.strings.search.noResults
+          : shell.i18n.strings.search.resultsCount.replace('{count}', String(count));
+      announceToScreenReader(shell.liveRegion, msg);
+    });
+  }
+
+  private setZoom(level: number): void {
+    this.explicitOptions.zoomLevel = Math.max(0.5, Math.min(3, level));
+    this.options = this.resolveOptions();
+    this.safely(() => {
+      this.relayout();
+    });
+  }
+
+  /** Creates cards for the visible events. Returns the number shown. */
+  private renderEvents(): number {
+    if (!this.timeline || !this.shell) return 0;
+    const { list, viewport, i18n } = this.shell;
+
+    for (const card of this.cards) this.resizeObserver?.unobserve(card);
+    clearChildren(list);
+    viewport.querySelector('.chronicle-empty')?.remove();
+
+    const visible = filterEvents(sortEvents(this.timeline.events), this.filterState);
+
+    this.cards = visible.map((evt: TimelineEvent) => {
+      const card = renderEventCard(evt, i18n, { isActive: evt.id === this.activeEventId });
+      card.addEventListener('click', () => {
+        this.selectEvent(evt.id);
+      });
+      list.appendChild(card);
+      return card;
+    });
+
+    if (visible.length === 0) {
+      viewport.appendChild(h('div', { class: 'chronicle-empty' }, i18n.strings.search.noResults));
+    }
+
+    this.relayout(visible);
+    return visible.length;
+  }
+
+  /**
+   * Measures cards and applies the layout. Safe to call repeatedly: it only
+   * writes positions, never creates or destroys focusable elements.
+   */
+  private relayout(visible?: TimelineEvent[]): void {
+    if (!this.timeline || !this.shell) return;
+    const { scroller, viewport } = this.shell;
+
+    const events = visible ?? filterEvents(sortEvents(this.timeline.events), this.filterState);
+    const width = Math.max(MIN_WIDTH, scroller.clientWidth || 800);
+    const height = scroller.clientHeight || 600;
+    this.lastScrollerWidth = scroller.clientWidth;
+
+    viewport.querySelector('.chronicle-axis-container')?.remove();
+    if (events.length === 0) {
+      viewport.style.removeProperty('width');
+      viewport.style.removeProperty('height');
       return;
     }
 
-    // Compute layout
-    const containerRect = this.container.getBoundingClientRect();
-    const width = Math.max(320, containerRect.width || 800);
-    const height = Math.max(400, containerRect.height || 600);
-
-    const layoutEngine = getLayout(this.options.layout);
-    const layoutResult: LayoutResult = layoutEngine.compute(
-      filtered,
+    const computed: LayoutResult = getLayout(this.options.layout).compute(
+      events,
       this.timeline.eras,
       width,
       height,
-      this.options
+      this.options,
+      this.createMeasurer(),
     );
+    // Layout engines work in LTR coordinates; flip them for RTL locales so
+    // time flows right→left, matching where an RTL scroller starts.
+    const layout = this.container.dir === 'rtl' ? mirrorLayout(computed) : computed;
 
-    // Set viewport dimensions
-    if (this.options.layout === "horizontal") {
-      viewport.style.width = `${layoutResult.totalWidth}px`;
-      viewport.style.height = `${layoutResult.totalHeight}px`;
-    } else {
-      viewport.style.height = `${layoutResult.totalHeight}px`;
-    }
+    this.applyLayout(layout);
+    viewport.prepend(renderAxis(layout, this.timeline.eras));
+  }
 
-    // Render axis & era bands
-    const axisEl = renderAxis(layoutResult, filtered, this.timeline.eras, i18n);
-    viewport.appendChild(axisEl);
+  private applyLayout(layout: LayoutResult): void {
+    if (!this.shell) return;
+    const { viewport } = this.shell;
 
-    // Render event cards
-    const cardElements: HTMLElement[] = [];
-    for (let i = 0; i < filtered.length; i++) {
-      const evt = filtered[i];
-      const pos = layoutResult.positions[i];
-      const isActive = evt.id === this.activeEventId;
-
-      const card = renderEventCard(evt, pos, i18n, {
-        isActive,
-        reducedMotion: this.options.reducedMotion || false,
-      });
-
-      card.addEventListener("click", () => {
-        this.highlightEvent(evt.id);
-        this.dispatchCustomEvent("chronicle:event-select", { eventId: evt.id });
-      });
-
-      cardElements.push(card);
-      viewport.appendChild(card);
-    }
-
-    this.container.appendChild(viewport);
-
-    // Set up accessible keyboard navigation
-    const cleanupKeyboard = setupKeyboardNavigation(
-      this.container,
-      () => cardElements,
-      (card) => {
-        const id = card.getAttribute("data-event-id");
-        if (id) {
-          this.highlightEvent(id);
-          this.dispatchCustomEvent("chronicle:event-select", { eventId: id });
-        }
+    if (layout.flow) {
+      viewport.style.removeProperty('width');
+      viewport.style.removeProperty('height');
+      for (const card of this.cards) {
+        for (const prop of ['left', 'top', 'width']) card.style.removeProperty(prop);
       }
+      return;
+    }
+
+    viewport.style.height = `${String(layout.totalHeight)}px`;
+    if (layout.direction === 'horizontal') {
+      viewport.style.width = `${String(layout.totalWidth)}px`;
+    } else {
+      viewport.style.removeProperty('width');
+    }
+
+    const byId = new Map(layout.positions.map((p) => [p.eventId, p]));
+    for (const card of this.cards) {
+      const pos = byId.get(card.dataset.eventId ?? '');
+      if (!pos) continue;
+      card.style.left = `${String(pos.x)}px`;
+      card.style.top = `${String(pos.y)}px`;
+      card.style.width = `${String(pos.width)}px`;
+      card.dataset.side = pos.side;
+      this.lastCardHeights.set(card, card.offsetHeight);
+      this.resizeObserver?.observe(card);
+    }
+  }
+
+  /**
+   * Returns a measurer that sizes every card to a given width in one batch,
+   * then reads all heights (one forced reflow per distinct width).
+   */
+  private createMeasurer(): CardMeasurer {
+    const cache = new Map<number, Map<string, number>>();
+    return (eventId, width) => {
+      let heights = cache.get(width);
+      if (!heights) {
+        heights = new Map();
+        for (const card of this.cards) card.style.width = `${String(width)}px`;
+        for (const card of this.cards) {
+          heights.set(card.dataset.eventId ?? '', card.offsetHeight);
+        }
+        cache.set(width, heights);
+      }
+      return heights.get(eventId) ?? 0;
+    };
+  }
+
+  /**
+   * Re-lays out only when the scroller width or a card's height actually
+   * changed (e.g. an image finished loading). Positioning cards does not
+   * change their size, so this cannot feed back into itself.
+   */
+  private onResize(entries: ResizeObserverEntry[]): void {
+    if (!this.shell) return;
+    const { scroller } = this.shell;
+    const changed = entries.some((entry) =>
+      entry.target === scroller
+        ? scroller.clientWidth !== this.lastScrollerWidth
+        : (entry.target as HTMLElement).offsetHeight !== this.lastCardHeights.get(entry.target),
     );
-    this.cleanupFns.push(cleanupKeyboard);
+    if (!changed || this.pendingFrame !== null) return;
+
+    this.pendingFrame = requestAnimationFrame(() => {
+      this.pendingFrame = null;
+      this.safely(() => {
+        this.relayout();
+      });
+    });
+  }
+
+  // ---------------------------------------------------------------------------
+  // Helpers
+  // ---------------------------------------------------------------------------
+
+  private selectEvent(eventId: string): void {
+    this.highlightEvent(eventId);
+    this.dispatchCustomEvent('chronicle:event-select', { eventId });
   }
 
   private highlightEvent(eventId: string): void {
     this.activeEventId = eventId;
-    const cards = this.container.querySelectorAll(".chronicle-event");
-    for (let i = 0; i < cards.length; i++) {
-      const el = cards[i] as HTMLElement;
-      if (el.getAttribute("data-event-id") === eventId) {
-        el.classList.add("chronicle-event--active");
-      } else {
-        el.classList.remove("chronicle-event--active");
-      }
+    for (const el of this.container.querySelectorAll('.chronicle-event')) {
+      el.classList.toggle('chronicle-event--active', el.getAttribute('data-event-id') === eventId);
     }
+    for (const el of this.container.querySelectorAll('.chronicle-marker')) {
+      el.classList.toggle('chronicle-marker--active', el.getAttribute('data-event-id') === eventId);
+    }
+  }
 
-    const markers = this.container.querySelectorAll(".chronicle-marker");
-    for (let i = 0; i < markers.length; i++) {
-      const el = markers[i] as HTMLElement;
-      if (el.getAttribute("data-event-id") === eventId) {
-        el.classList.add("chronicle-marker--active");
-      } else {
-        el.classList.remove("chronicle-marker--active");
-      }
+  private cardById(eventId: string): HTMLElement | undefined {
+    return this.cards.find((c) => c.dataset.eventId === eventId);
+  }
+
+  private focusedCardId(): string | null {
+    const root = this.container.getRootNode() as Document | ShadowRoot;
+    const active = root.activeElement;
+    return active instanceof HTMLElement && this.container.contains(active)
+      ? (active.dataset.eventId ?? null)
+      : null;
+  }
+
+  private prefersReducedMotion(): boolean {
+    if (this.options.reducedMotion) return true;
+    return typeof matchMedia === 'function'
+      ? matchMedia('(prefers-reduced-motion: reduce)').matches
+      : false;
+  }
+
+  /** Effective options: explicit host options → timeline.settings → defaults. */
+  private resolveOptions(): RenderOptions {
+    const explicit = this.explicitOptions;
+    const settings = this.timeline?.settings;
+    return {
+      ...explicit,
+      layout: explicit.layout ?? settings?.layout ?? 'vertical',
+      theme: explicit.theme ?? settings?.theme ?? 'light',
+      locale: explicit.locale ?? settings?.locale ?? 'en',
+      zoomLevel: explicit.zoomLevel ?? settings?.zoomLevel ?? 1,
+      startDate: explicit.startDate ?? settings?.startDate,
+      reducedMotion: explicit.reducedMotion ?? false,
+    };
+  }
+
+  private safely(fn: () => void): void {
+    try {
+      fn();
+    } catch (err: unknown) {
+      this.reportError(err);
     }
+  }
+
+  private reportError(err: unknown): void {
+    const message = err instanceof Error ? err.message : String(err);
+    this.dispatchCustomEvent('chronicle:error', { message });
   }
 
   private dispatchCustomEvent(name: string, detail: unknown): void {
-    const event = new CustomEvent(name, {
-      bubbles: true,
-      composed: true,
-      detail,
-    });
-    this.container.dispatchEvent(event);
+    this.container.dispatchEvent(new CustomEvent(name, { bubbles: true, composed: true, detail }));
   }
+}
+
+/** Mirrors a layout's x coordinates across its width (for RTL rendering). */
+export function mirrorLayout(layout: LayoutResult): LayoutResult {
+  if (layout.flow) return layout;
+  const W = layout.totalWidth;
+  return {
+    ...layout,
+    positions: layout.positions.map((p) => ({
+      ...p,
+      x: W - p.x - p.width,
+      markerX: W - p.markerX,
+      side: p.side === 'left' ? 'right' : p.side === 'right' ? 'left' : p.side,
+    })),
+    axisStart: { x: W - layout.axisEnd.x, y: layout.axisStart.y },
+    axisEnd: { x: W - layout.axisStart.x, y: layout.axisEnd.y },
+    eraBands: layout.eraBands?.map((b) => ({ ...b, x: W - b.x - b.width })),
+  };
 }
