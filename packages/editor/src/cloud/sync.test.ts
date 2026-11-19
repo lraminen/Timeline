@@ -30,6 +30,9 @@ function fakeApi(
     getDraft: vi.fn(),
     createShareLink: vi.fn(),
     uploadMedia: vi.fn(),
+    listApiKeys: vi.fn(),
+    createApiKey: vi.fn(),
+    revokeApiKey: vi.fn(),
     createProject: vi.fn(() =>
       Promise.resolve({
         id: 'p1',

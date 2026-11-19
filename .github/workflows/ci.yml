@@ -57,7 +57,15 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Cache WordPress downloads (Playground)
+        uses: actions/cache@v4
+        with:
+          path: ~/.wordpress-playground
+          key: wordpress-playground-${{ hashFiles('pnpm-lock.yaml') }}
+
       - name: Test
+        # Includes the WordPress plugin's PHP tests, run in WordPress Playground
+        # (PHP 8.3 + WordPress 7.1, and PHP 7.4 + WordPress 6.6).
         run: pnpm test
 
   build:
@@ -84,6 +92,16 @@ jobs:
       - name: Build
         run: pnpm build
 
+      - name: Package the WordPress plugin
+        run: pnpm --filter @chronicle/wordpress package
+
+      - name: Upload the WordPress plugin
+        uses: actions/upload-artifact@v4
+        with:
+          name: chronicle-timeline-plugin
+          path: packages/wordpress/dist/*.zip
+          retention-days: 30
+
   e2e:
     runs-on: ubuntu-latest
     needs: test
@@ -109,6 +127,12 @@ jobs:
         # One browser install serves both suites (same Playwright version).
         run: pnpm --filter @chronicle/editor exec playwright install --with-deps chromium
 
+      - name: Cache WordPress downloads (Playground)
+        uses: actions/cache@v4
+        with:
+          path: ~/.wordpress-playground
+          key: wordpress-playground-${{ hashFiles('pnpm-lock.yaml') }}
+
       - name: E2E + accessibility tests
         run: pnpm test:e2e
 
@@ -121,4 +145,5 @@ jobs:
             packages/web-component/playwright-report
             packages/web-component/test-results
             packages/editor/test-results
+            packages/wordpress/test-results
           retention-days: 7

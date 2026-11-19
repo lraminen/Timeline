@@ -181,3 +181,36 @@ test('uploads media through the server pipeline', async ({ page }) => {
     page.locator('chronicle-timeline .chronicle-event__media img').first(),
   ).toHaveAttribute('src', src);
 });
+
+test('creates an API key shown once, which works until it is revoked', async ({ page }) => {
+  await signUp(page);
+  await page.getByRole('button', { name: /^Account:/ }).click();
+  await page.getByRole('menuitem', { name: 'API keys…' }).click();
+  const dialog = page.getByRole('dialog', { name: 'API keys' });
+  await expect(dialog.getByText('No keys yet.')).toBeVisible();
+
+  await dialog.getByLabel('New key name').fill('Our WordPress site');
+  await dialog.getByRole('button', { name: 'Create key' }).click();
+  const field = dialog.getByLabel('New key “Our WordPress site”');
+  await expect(field).toHaveValue(/^chr_[A-Za-z0-9]{12}_[A-Za-z0-9_-]{43}$/);
+  const key = await field.inputValue();
+  expect((await new AxeBuilder({ page }).include('[role="dialog"]').analyze()).violations).toEqual(
+    [],
+  );
+
+  const me = () => page.request.get(`${API}/api/v1/me`, { headers: { 'x-api-key': key } });
+  expect((await me()).status()).toBe(200);
+
+  // Reopening lists the key by prefix only; the secret is gone for good.
+  await page.keyboard.press('Escape');
+  await page.getByRole('button', { name: /^Account:/ }).click();
+  await page.getByRole('menuitem', { name: 'API keys…' }).click();
+  await expect(dialog.getByText('Our WordPress site')).toBeVisible();
+  await expect(dialog.getByText(`${key.slice(0, 17)}…`)).toBeVisible();
+  expect(await dialog.innerText()).not.toContain(key.slice(17));
+
+  page.once('dialog', (confirm) => void confirm.accept());
+  await dialog.getByRole('button', { name: 'Revoke Our WordPress site' }).click();
+  await expect(dialog.getByText('No keys yet.')).toBeVisible();
+  expect((await me()).status()).toBe(401);
+});

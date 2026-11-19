@@ -35,6 +35,9 @@ export type Api = Pick<
   | 'publish'
   | 'createShareLink'
   | 'uploadMedia'
+  | 'listApiKeys'
+  | 'createApiKey'
+  | 'revokeApiKey'
   | 'pageUrl'
   | 'embedUrl'
 >;

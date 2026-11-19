@@ -3,15 +3,32 @@ import { Readable } from 'node:stream';
 import { z } from 'zod';
 import { ApiError, badRequest, parse } from '../http.js';
 import { loadPublished, type PublishedTimeline } from '../services/published.js';
+import { renderEventList } from '../pages/render.js';
 
 const SlugParams = z.object({ slug: z.string().min(1).max(100) });
 const VersionParams = SlugParams.extend({ version: z.coerce.number().int().positive() });
-const TokenQuery = z.object({ token: z.string().max(200).optional() });
+const EmbedQuery = z.object({
+  token: z.string().max(200).optional(),
+  /** `fallback` adds the server-rendered no-JS event list (`fallbackHtml`). */
+  include: z.enum(['fallback']).optional(),
+});
 
 const PROXY_MAX_BYTES = 15 * 1024 * 1024;
 const PROXY_TIMEOUT_MS = 10_000;
 
-function sendTimeline(reply: FastifyReply, published: PublishedTimeline, pinned: boolean) {
+interface SendOptions {
+  pinned: boolean;
+  publicUrl: string;
+  fallback: boolean;
+}
+
+/** Entity tag of one representation (with or without the fallback HTML). */
+function entityTag(published: PublishedTimeline, fallback: boolean): string {
+  return `"v${String(published.version)}${fallback ? '-f' : ''}"`;
+}
+
+function sendTimeline(reply: FastifyReply, published: PublishedTimeline, options: SendOptions) {
+  const { pinned, publicUrl, fallback } = options;
   const cache = !published.isPublic
     ? 'private, no-store'
     : pinned
@@ -19,12 +36,16 @@ function sendTimeline(reply: FastifyReply, published: PublishedTimeline, pinned:
       : 'public, max-age=60, stale-while-revalidate=600';
   void reply
     .header('cache-control', cache)
-    .header('etag', `"v${String(published.version)}"`)
+    .header('etag', entityTag(published, fallback))
     .header('cross-origin-resource-policy', 'cross-origin');
   return {
     version: published.version,
     publishedAt: published.publishedAt.toISOString(),
+    pageUrl: `${publicUrl}/timeline/${encodeURIComponent(published.project.slug)}${
+      pinned ? `/v/${String(published.version)}` : ''
+    }`,
     timeline: published.timeline,
+    ...(fallback ? { fallbackHtml: renderEventList(published.timeline, publicUrl) } : {}),
   };
 }
 
@@ -35,22 +56,25 @@ export const publicRoutes: FastifyPluginAsync = async (app) => {
   /** Latest published version — what <chronicle-timeline src="…"> loads. */
   app.get('/embed/:slug', async (request, reply) => {
     const { slug } = parse(SlugParams, request.params, 'path');
-    const { token } = parse(TokenQuery, request.query, 'query');
+    const { token, include } = parse(EmbedQuery, request.query, 'query');
+    const fallback = include === 'fallback';
     const published = await loadPublished(db, config, slug, { token });
-    if (
-      request.headers['if-none-match'] === `"v${String(published.version)}"` &&
-      published.isPublic
-    ) {
+    if (request.headers['if-none-match'] === entityTag(published, fallback) && published.isPublic) {
       return reply.status(304).send();
     }
-    return sendTimeline(reply, published, false);
+    return sendTimeline(reply, published, { pinned: false, publicUrl: config.publicUrl, fallback });
   });
 
   /** A specific version; immutable, so cached forever when public. */
   app.get('/embed/:slug/v/:version', async (request, reply) => {
     const { slug, version } = parse(VersionParams, request.params, 'path');
-    const { token } = parse(TokenQuery, request.query, 'query');
-    return sendTimeline(reply, await loadPublished(db, config, slug, { version, token }), true);
+    const { token, include } = parse(EmbedQuery, request.query, 'query');
+    const published = await loadPublished(db, config, slug, { version, token });
+    return sendTimeline(reply, published, {
+      pinned: true,
+      publicUrl: config.publicUrl,
+      fallback: include === 'fallback',
+    });
   });
 
   /**

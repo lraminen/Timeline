@@ -9,6 +9,10 @@
       "dependsOn": ["build"],
       "cache": false
     },
+    "@chronicle/wordpress#build": {
+      "dependsOn": ["^build"],
+      "outputs": ["plugin/build/**"]
+    },
     "lint": {
       "dependsOn": []
     },

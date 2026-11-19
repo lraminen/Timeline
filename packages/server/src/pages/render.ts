@@ -136,6 +136,19 @@ function renderEvent(evt: TimelineEvent, locale: string, base: string): string {
 }
 
 /**
+ * The semantic, no-JS event list (`<ol class="ssr-events">`) placed inside
+ * `<chronicle-timeline>` as light DOM. Also served to embedders (the
+ * WordPress plugin) through the embed API so every host shows the same
+ * fallback. All text is escaped; event bodies go through the safe Markdown
+ * renderer, which never passes HTML through.
+ */
+export function renderEventList(timeline: Timeline, publicUrl: string): string {
+  const locale = timeline.settings.locale || 'en';
+  const items = sortEvents(timeline.events).map((evt) => renderEvent(evt, locale, publicUrl));
+  return `<ol class="ssr-events">\n${items.join('\n')}\n</ol>`;
+}
+
+/**
  * Full HTML page for a published timeline. The semantic event list is
  * server-rendered inside <chronicle-timeline> as light DOM: crawlers and
  * no-JS readers get real content; once the component upgrades, its shadow
@@ -184,9 +197,7 @@ ${image ? `<meta property="og:image" content="${e(image.url)}">\n<meta property=
 <main>
 <chronicle-timeline class="page-timeline" aria-label="${e(timeline.title)}">
   <script type="application/json">${jsonForScript(timeline)}</script>
-  <ol class="ssr-events">
-${events.map((evt) => renderEvent(evt, locale, publicUrl)).join('\n')}
-  </ol>
+${renderEventList(timeline, publicUrl)}
 </chronicle-timeline>
 </main>
 <footer class="page-footer">

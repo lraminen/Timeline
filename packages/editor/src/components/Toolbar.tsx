@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import {
   ArrowDownToLine,
@@ -16,6 +17,7 @@ import {
   Cloud,
   LogIn,
   LogOut,
+  KeyRound,
 } from 'lucide-react';
 import { getAllThemes } from '@chronicle/core';
 import type { TimelineSettings } from '@chronicle/schema';
@@ -24,6 +26,7 @@ import { updateSettings } from '../store/commands.js';
 import { addNewEvent, deleteSelected, duplicateSelected } from '../actions.js';
 import { IconButton } from './ui.js';
 import { useCloud } from '../cloud/cloud-store.js';
+import { ApiKeysDialog } from './cloud/ApiKeysDialog.js';
 import { isApplePlatform, MOD_KEY } from '../lib/platform.js';
 
 const isMac = isApplePlatform();
@@ -84,6 +87,7 @@ function AccountMenu({
   const api = useCloud((s) => s.api);
   const user = useCloud((s) => s.user);
   const checking = useCloud((s) => s.checking);
+  const [keysOpen, setKeysOpen] = useState(false);
   if (!api) return null;
   if (checking) return <span className="px-2 text-xs text-slate-600">Connecting…</span>;
   if (!user) {
@@ -94,43 +98,54 @@ function AccountMenu({
     );
   }
   return (
-    <DropdownMenu.Root>
-      <DropdownMenu.Trigger className="btn-ghost" aria-label={`Account: ${user.name}`}>
-        <span
-          className="flex h-6 w-6 items-center justify-center rounded-full bg-blue-600 text-xs font-semibold text-white"
-          aria-hidden
-        >
-          {user.name.slice(0, 1).toUpperCase()}
-        </span>
-        <ChevronDown size={14} aria-hidden />
-      </DropdownMenu.Trigger>
-      <DropdownMenu.Portal>
-        <DropdownMenu.Content
-          align="end"
-          sideOffset={4}
-          className="z-40 min-w-56 rounded-md border border-slate-200 bg-white p-1 shadow-lg"
-        >
-          <DropdownMenu.Label className="px-2 py-1.5 text-xs text-slate-600">
-            Signed in as <span className="font-medium text-slate-900">{user.email}</span>
-          </DropdownMenu.Label>
-          <DropdownMenu.Item className={menuItem} onSelect={onOpenFromServer}>
-            <Cloud size={15} aria-hidden /> Open from Chronicle…
-          </DropdownMenu.Item>
-          <DropdownMenu.Separator className="my-1 h-px bg-slate-200" />
-          <DropdownMenu.Item
-            className={menuItem}
-            onSelect={() => {
-              const { api: client, setUser } = useCloud.getState();
-              void client?.logout().then(() => {
-                setUser(null);
-              });
-            }}
+    <>
+      <DropdownMenu.Root>
+        <DropdownMenu.Trigger className="btn-ghost" aria-label={`Account: ${user.name}`}>
+          <span
+            className="flex h-6 w-6 items-center justify-center rounded-full bg-blue-600 text-xs font-semibold text-white"
+            aria-hidden
           >
-            <LogOut size={15} aria-hidden /> Sign out
-          </DropdownMenu.Item>
-        </DropdownMenu.Content>
-      </DropdownMenu.Portal>
-    </DropdownMenu.Root>
+            {user.name.slice(0, 1).toUpperCase()}
+          </span>
+          <ChevronDown size={14} aria-hidden />
+        </DropdownMenu.Trigger>
+        <DropdownMenu.Portal>
+          <DropdownMenu.Content
+            align="end"
+            sideOffset={4}
+            className="z-40 min-w-56 rounded-md border border-slate-200 bg-white p-1 shadow-lg"
+          >
+            <DropdownMenu.Label className="px-2 py-1.5 text-xs text-slate-600">
+              Signed in as <span className="font-medium text-slate-900">{user.email}</span>
+            </DropdownMenu.Label>
+            <DropdownMenu.Item className={menuItem} onSelect={onOpenFromServer}>
+              <Cloud size={15} aria-hidden /> Open from Chronicle…
+            </DropdownMenu.Item>
+            <DropdownMenu.Item
+              className={menuItem}
+              onSelect={() => {
+                setKeysOpen(true);
+              }}
+            >
+              <KeyRound size={15} aria-hidden /> API keys…
+            </DropdownMenu.Item>
+            <DropdownMenu.Separator className="my-1 h-px bg-slate-200" />
+            <DropdownMenu.Item
+              className={menuItem}
+              onSelect={() => {
+                const { api: client, setUser } = useCloud.getState();
+                void client?.logout().then(() => {
+                  setUser(null);
+                });
+              }}
+            >
+              <LogOut size={15} aria-hidden /> Sign out
+            </DropdownMenu.Item>
+          </DropdownMenu.Content>
+        </DropdownMenu.Portal>
+      </DropdownMenu.Root>
+      <ApiKeysDialog open={keysOpen} onOpenChange={setKeysOpen} />
+    </>
   );
 }
 

@@ -4,3 +4,5 @@ coverage/
 .turbo/
 pnpm-lock.yaml
 *.tsbuildinfo
+packages/wordpress/plugin/build/
+packages/wordpress/.playground/

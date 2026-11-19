@@ -26,6 +26,16 @@ export interface ProjectSummary {
   updatedAt: string;
 }
 
+/** An API key as listed; the secret itself is only returned once, on creation. */
+export interface ApiKey {
+  id: string;
+  label: string;
+  prefix: string;
+  createdAt: string;
+  lastUsedAt: string | null;
+  expiresAt: string | null;
+}
+
 export interface UploadedMedia {
   id: string;
   url: string;
@@ -210,6 +220,21 @@ export class ChronicleApi {
     const form = new FormData();
     form.append('file', file, file.name);
     return this.request(`/projects/${projectId}/media`, { method: 'POST', body: form });
+  }
+
+  // --- API keys (for integrations such as the WordPress plugin) -----------
+
+  async listApiKeys(): Promise<ApiKey[]> {
+    return (await this.request<{ apiKeys: ApiKey[] }>('/api-keys')).apiKeys;
+  }
+
+  /** Returns the new key with its secret (`key`), which is never shown again. */
+  createApiKey(label: string): Promise<ApiKey & { key: string }> {
+    return this.request('/api-keys', this.json('POST', { label }));
+  }
+
+  async revokeApiKey(id: string): Promise<void> {
+    await this.request(`/api-keys/${id}`, { method: 'DELETE' });
   }
 
   // --- Public URLs ------------------------------------------------------

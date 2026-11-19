@@ -52,23 +52,23 @@ To point the editor at a server, serve a `config.json` next to the editor build:
 
 Authenticate with `Authorization: Bearer <access token>` or an API key (`Authorization: Bearer chr_…` or `X-API-Key`).
 
-|                                                                                            |                                                                                    |
-| ------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------- |
-| `POST /auth/register`, `POST /auth/login`                                                  | Returns an access token; sets the refresh cookie                                   |
-| `POST /auth/refresh`, `POST /auth/logout`                                                  | Cookie-based; rotates / revokes the session                                        |
-| `GET /me`                                                                                  |                                                                                    |
-| `GET/POST /api-keys`, `DELETE /api-keys/:id`                                               | Session only (an API key cannot manage keys)                                       |
-| `GET/POST /projects`, `GET/PATCH/DELETE /projects/:id`                                     | `PATCH` slug/visibility: owner                                                     |
-| `GET/PUT /projects/:id/draft`                                                              | `PUT` requires `If-Match: "<draftVersion>"`; `412` returns the current server copy |
-| `GET/POST /projects/:id/events`, `GET/PATCH/DELETE /projects/:id/events/:eventId`          | Fine-grained edits; concurrency-safe                                               |
-| `GET/POST /projects/:id/revisions`, `GET /projects/:id/revisions/:version`                 | `POST` publishes the draft                                                         |
-| `POST /projects/:id/rollback/:version`                                                     | Republishes an old version as a new one and resets the draft                       |
-| `GET/POST /projects/:id/collaborators`, `PATCH/DELETE /projects/:id/collaborators/:userId` | Roles: `editor`, `viewer`                                                          |
-| `GET/POST /projects/:id/media`, `DELETE /projects/:id/media/:mediaId`                      | Multipart field `file`                                                             |
-| `POST /projects/:id/share-links`, `DELETE /projects/:id/share-links`                       | Expiring links for private timelines; `DELETE` revokes all                         |
-| `GET /projects/:id/audit`                                                                  | Owner only                                                                         |
-| `GET /embed/:slug`, `GET /embed/:slug/v/:version`                                          | Public JSON (`?token=` for private)                                                |
-| `GET /media-proxy?url=`                                                                    | Allowlisted image proxy                                                            |
+|                                                                                            |                                                                                                                   |
+| ------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------- |
+| `POST /auth/register`, `POST /auth/login`                                                  | Returns an access token; sets the refresh cookie                                                                  |
+| `POST /auth/refresh`, `POST /auth/logout`                                                  | Cookie-based; rotates / revokes the session                                                                       |
+| `GET /me`                                                                                  |                                                                                                                   |
+| `GET/POST /api-keys`, `DELETE /api-keys/:id`                                               | Session only (an API key cannot manage keys)                                                                      |
+| `GET/POST /projects`, `GET/PATCH/DELETE /projects/:id`                                     | `PATCH` slug/visibility: owner                                                                                    |
+| `GET/PUT /projects/:id/draft`                                                              | `PUT` requires `If-Match: "<draftVersion>"`; `412` returns the current server copy                                |
+| `GET/POST /projects/:id/events`, `GET/PATCH/DELETE /projects/:id/events/:eventId`          | Fine-grained edits; concurrency-safe                                                                              |
+| `GET/POST /projects/:id/revisions`, `GET /projects/:id/revisions/:version`                 | `POST` publishes the draft                                                                                        |
+| `POST /projects/:id/rollback/:version`                                                     | Republishes an old version as a new one and resets the draft                                                      |
+| `GET/POST /projects/:id/collaborators`, `PATCH/DELETE /projects/:id/collaborators/:userId` | Roles: `editor`, `viewer`                                                                                         |
+| `GET/POST /projects/:id/media`, `DELETE /projects/:id/media/:mediaId`                      | Multipart field `file`                                                                                            |
+| `POST /projects/:id/share-links`, `DELETE /projects/:id/share-links`                       | Expiring links for private timelines; `DELETE` revokes all                                                        |
+| `GET /projects/:id/audit`                                                                  | Owner only                                                                                                        |
+| `GET /embed/:slug`, `GET /embed/:slug/v/:version`                                          | Public JSON with `pageUrl` (`?token=` for private; `?include=fallback` adds `fallbackHtml`, the no-JS event list) |
+| `GET /media-proxy?url=`                                                                    | Allowlisted image proxy                                                                                           |
 
 Public, outside `/api/v1`: `GET /timeline/:slug[/v/:version]` (server-rendered page), `GET /embed.js` (web component), `GET /media/…`, `GET /healthz`.
 

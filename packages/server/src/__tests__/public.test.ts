@@ -68,6 +68,61 @@ describe('embed API', () => {
     expect(latest.json<{ version: number }>().version).toBe(2);
   });
 
+  it('adds the page link, and the escaped no-JS event list on request', async () => {
+    const p = await createProject(t.app, owner, {
+      schemaVersion: '1.0.0',
+      id: 'x',
+      title: 'Fallback',
+      settings: { layout: 'vertical', theme: 'light', locale: 'en' },
+      events: [
+        {
+          id: 'e1',
+          title: '<img src=x onerror=alert(1)>',
+          date: { start: '1969-07-20' },
+          body: 'Some **bold** text <script>alert(2)</script>',
+        },
+      ],
+    });
+    await api('POST', `/projects/${p.id}/revisions`, {});
+    await api('PATCH', `/projects/${p.id}`, { isPublic: true });
+
+    const plain = await t.app.inject({ method: 'GET', url: `/api/v1/embed/${p.slug}` });
+    const plainBody = plain.json<{ pageUrl: string; fallbackHtml?: string }>();
+    expect(plainBody.pageUrl).toBe(`${t.config.publicUrl}/timeline/${p.slug}`);
+    expect(plainBody.fallbackHtml).toBeUndefined();
+
+    const res = await t.app.inject({
+      method: 'GET',
+      url: `/api/v1/embed/${p.slug}?include=fallback`,
+    });
+    const { fallbackHtml } = res.json<{ fallbackHtml: string }>();
+    expect(fallbackHtml).toMatch(/^<ol class="ssr-events">/);
+    expect(fallbackHtml).toContain('<time datetime="1969-07-20">');
+    expect(fallbackHtml).toContain('<strong>bold</strong>');
+    expect(fallbackHtml).not.toMatch(/<script|<img src=x/i);
+    expect(fallbackHtml).toContain('&lt;img src=x onerror=alert(1)&gt;');
+
+    // The two representations have different entity tags.
+    expect(res.headers.etag).toBe('"v1-f"');
+    expect(plain.headers.etag).toBe('"v1"');
+    const notModified = await t.app.inject({
+      method: 'GET',
+      url: `/api/v1/embed/${p.slug}?include=fallback`,
+      headers: { 'if-none-match': '"v1"' },
+    });
+    expect(notModified.statusCode).toBe(200);
+
+    const pinned = await t.app.inject({
+      method: 'GET',
+      url: `/api/v1/embed/${p.slug}/v/1?include=fallback`,
+    });
+    expect(pinned.json<{ pageUrl: string }>().pageUrl).toMatch(/\/v\/1$/);
+    expect(pinned.json<{ fallbackHtml: string }>().fallbackHtml).toBe(fallbackHtml);
+
+    const bad = await t.app.inject({ method: 'GET', url: `/api/v1/embed/${p.slug}?include=x` });
+    expect(bad.statusCode).toBe(400);
+  });
+
   it('hides private, unpublished and unknown timelines behind the same 404', async () => {
     const priv = await published(undefined, false);
     const unpublished = await createProject(t.app, owner);

@@ -31,3 +31,7 @@ CHRONICLE_CONTEXT.md
 
 # Server E2E media
 packages/server/e2e-storage/
+
+# WordPress plugin: build output and local WordPress sites (Playground)
+packages/wordpress/plugin/build/
+packages/wordpress/.playground/

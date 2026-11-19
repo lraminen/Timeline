@@ -1,22 +1,27 @@
 {
   "name": "@chronicle/wordpress",
   "version": "0.1.0",
-  "description": "WordPress block plugin",
+  "private": true,
+  "description": "Chronicle Timeline WordPress plugin: block, shortcode, server-rendered fallback and post sync",
   "type": "module",
-  "main": "dist/index.js",
-  "module": "dist/index.js",
-  "types": "dist/index.d.ts",
-  "exports": {
-    ".": {
-      "types": "./dist/index.d.ts",
-      "import": "./dist/index.js"
-    }
-  },
   "scripts": {
-    "build": "tsc --build",
-    "typecheck": "tsc --noEmit"
+    "build": "tsc --noEmit && vite build && node scripts/copy-component.mjs",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run && node scripts/test-php.mjs",
+    "test:php": "node scripts/test-php.mjs",
+    "test:e2e": "playwright test -c e2e",
+    "package": "node scripts/package.mjs",
+    "playground": "node scripts/playground-server.mjs"
   },
-  "dependencies": {
-    "@chronicle/web-component": "workspace:*"
+  "devDependencies": {
+    "@axe-core/playwright": "4.10.1",
+    "@chronicle/web-component": "workspace:*",
+    "@playwright/test": "1.49.1",
+    "@types/react": "18.3.12",
+    "@wp-playground/cli": "3.1.65",
+    "fflate": "0.8.2",
+    "typescript": "^5.7.0",
+    "vite": "5.4.21",
+    "vitest": "^2.1.9"
   }
 }

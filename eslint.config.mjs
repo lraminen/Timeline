@@ -18,6 +18,8 @@ export default tseslint.config(
             'packages/*/drizzle.config.ts',
           ],
           defaultProject: 'tsconfig.base.json',
+          // One vite/vitest/drizzle config per package.
+          maximumDefaultProjectFileMatchCount_THIS_WILL_SLOW_DOWN_LINTING: 16,
         },
         tsconfigRootDir: import.meta.dirname,
       },
