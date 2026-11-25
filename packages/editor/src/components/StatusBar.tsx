@@ -1,5 +1,14 @@
+import { useMemo } from 'react';
 import * as Popover from '@radix-ui/react-popover';
-import { CircleAlert, CircleCheck, CloudOff, HardDrive, TriangleAlert } from 'lucide-react';
+import {
+  CircleAlert,
+  CircleCheck,
+  CloudOff,
+  GitCompareArrows,
+  HardDrive,
+  TriangleAlert,
+} from 'lucide-react';
+import { detectDeterministicConflicts } from '@chronicle/ai';
 import { useIssues, useOnline, type SaveStatus } from '../hooks.js';
 import { useEditor } from '../store/editor-store.js';
 import { CloudStatus } from './cloud/CloudStatus.js';
@@ -9,13 +18,17 @@ export function StatusBar({
   offlineReady,
   issuesOpen,
   onIssuesOpenChange,
+  onOpenConflicts,
 }: {
   save: SaveStatus;
   offlineReady: boolean;
   issuesOpen: boolean;
   onIssuesOpenChange: (open: boolean) => void;
+  onOpenConflicts?: () => void;
 }) {
   const issues = useIssues();
+  const doc = useEditor((s) => s.doc);
+  const conflictCount = useMemo(() => detectDeterministicConflicts(doc).length, [doc]);
   const online = useOnline();
   const errors = issues.filter((i) => i.severity === 'error');
   const warnings = issues.filter((i) => i.severity === 'warning');
@@ -95,6 +108,23 @@ export function StatusBar({
       </span>
 
       <CloudStatus />
+
+      {onOpenConflicts && (
+        <button
+          type="button"
+          className="btn-ghost px-2 py-0.5 text-xs"
+          onClick={onOpenConflicts}
+        >
+          <GitCompareArrows
+            size={13}
+            className={conflictCount > 0 ? 'text-amber-700' : 'text-slate-600'}
+            aria-hidden
+          />
+          {conflictCount > 0
+            ? `${String(conflictCount)} conflict${conflictCount === 1 ? '' : 's'}`
+            : 'Check conflicts'}
+        </button>
+      )}
 
       <span className="ml-auto flex items-center gap-1">
         {!online && (

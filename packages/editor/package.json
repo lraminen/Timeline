@@ -13,6 +13,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@chronicle/ai": "workspace:*",
     "@chronicle/core": "workspace:*",
     "@chronicle/schema": "workspace:*",
     "@chronicle/web-component": "workspace:*",

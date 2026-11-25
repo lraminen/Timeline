@@ -32,6 +32,7 @@
   },
   "dependencies": {
     "@aws-sdk/client-s3": "3.716.0",
+    "@chronicle/ai": "workspace:*",
     "@chronicle/core": "workspace:*",
     "@chronicle/schema": "workspace:*",
     "@chronicle/web-component": "workspace:*",

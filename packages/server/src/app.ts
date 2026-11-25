@@ -5,6 +5,7 @@ import helmet from '@fastify/helmet';
 import multipart from '@fastify/multipart';
 import rateLimit from '@fastify/rate-limit';
 import { ZodError } from 'zod';
+import type { AiProvider } from '@chronicle/ai';
 import type { Config } from './config.js';
 import type { Database, Db } from './db/client.js';
 import { ApiError, unauthorized } from './http.js';
@@ -16,6 +17,7 @@ import {
   type Storage,
 } from './media/storage.js';
 import { ClamdScanner, noopScanner, type Scanner } from './media/scanner.js';
+import { buildAiProviderFromConfig } from './services/ai.js';
 import { authRoutes } from './routes/auth.js';
 import { projectRoutes } from './routes/projects.js';
 import { revisionRoutes } from './routes/revisions.js';
@@ -24,6 +26,7 @@ import { apiKeyRoutes } from './routes/api-keys.js';
 import { mediaRoutes } from './routes/media.js';
 import { publicRoutes } from './routes/public.js';
 import { pageRoutes } from './routes/pages.js';
+import { aiRoutes } from './routes/ai.js';
 
 export interface AuthContext {
   userId: string;
@@ -37,7 +40,8 @@ export interface AppContext {
   storage: Storage;
   scanner: Scanner;
   cdn: CdnInvalidator;
-  /** Injectable for tests; used by the media proxy. */
+  aiProvider: AiProvider | null;
+  /** Injectable for tests; used by the media proxy and AI URL fetch. */
   fetch: typeof fetch;
 }
 
@@ -56,6 +60,7 @@ export interface AppOptions {
   storage?: Storage;
   scanner?: Scanner;
   cdn?: CdnInvalidator;
+  aiProvider?: AiProvider | null;
   fetch?: typeof fetch;
   logger?: boolean;
 }
@@ -87,6 +92,7 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
           },
   });
 
+  const fetchFn = options.fetch ?? fetch;
   app.decorate('ctx', {
     config,
     db: database.db,
@@ -95,7 +101,11 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
       options.scanner ??
       (config.CLAMAV_ADDRESS ? ClamdScanner.fromAddress(config.CLAMAV_ADDRESS) : noopScanner),
     cdn: options.cdn ?? noopInvalidator,
-    fetch: options.fetch ?? fetch,
+    aiProvider:
+      options.aiProvider !== undefined
+        ? options.aiProvider
+        : buildAiProviderFromConfig(config, fetchFn),
+    fetch: fetchFn,
   } satisfies AppContext);
   app.decorateRequest('auth', null);
 
@@ -224,6 +234,7 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
       await api.register(apiKeyRoutes);
       await api.register(mediaRoutes);
       await api.register(publicRoutes);
+      await api.register(aiRoutes);
     },
     { prefix: '/api/v1' },
   );

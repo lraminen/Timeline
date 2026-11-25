@@ -176,3 +176,28 @@ export const auditLog = pgTable(
     index('audit_actor_idx').on(t.actorId, t.createdAt),
   ],
 );
+
+/**
+ * Per-request AI token and cost tracking for budget enforcement and quotas.
+ */
+export const aiUsage = pgTable(
+  'ai_usage',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    projectId: uuid('project_id').references(() => projects.id, { onDelete: 'set null' }),
+    operation: text('operation').notNull(),
+    provider: text('provider').notNull(),
+    model: text('model').notNull(),
+    inputTokens: integer('input_tokens').notNull().default(0),
+    outputTokens: integer('output_tokens').notNull().default(0),
+    estimatedCostMicros: integer('estimated_cost_micros').notNull().default(0),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    index('ai_usage_user_idx').on(t.userId, t.createdAt),
+    index('ai_usage_project_idx').on(t.projectId, t.createdAt),
+  ],
+);

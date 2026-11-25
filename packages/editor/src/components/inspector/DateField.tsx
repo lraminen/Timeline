@@ -1,5 +1,10 @@
 import { useEffect, useId, useState } from 'react';
+import { Sparkles } from 'lucide-react';
 import { formatDate } from '@chronicle/core';
+import { normalizeNaturalDateDeterministic, type DateNormalizationResult } from '@chronicle/ai';
+import type { TimelineDate } from '@chronicle/schema';
+import { useCloud } from '../../cloud/cloud-store.js';
+import { useEditor } from '../../store/editor-store.js';
 import { daysInMonth, formatDateParts, parseDateParts, type DateParts } from '../../lib/dates.js';
 
 const MONTH_NAMES = Array.from({ length: 12 }, (_, i) =>
@@ -9,25 +14,37 @@ const MONTH_NAMES = Array.from({ length: 12 }, (_, i) =>
 );
 
 /**
- * Partial-date input: Year + CE/BCE + optional month + optional day.
+ * Partial-date input: Year + CE/BCE + optional month + optional day,
+ * plus an optional natural-language date parser ("the summer of '69").
  * Emits Chronicle partial-ISO strings (`1969`, `1969-07`, `-0044-03-15`).
  */
 export function DateField({
   legend,
   value,
   onChange,
+  onApplyNormalized,
   error,
   locale = 'en',
 }: {
   legend: string;
   value: string | undefined;
   onChange: (value: string) => void;
+  onApplyNormalized?: (date: TimelineDate) => void;
   error?: string | null;
   locale?: string;
 }) {
   const id = useId();
   const parsed = value ? parseDateParts(value) : null;
   const [yearText, setYearText] = useState(parsed ? String(parsed.year) : '');
+  const [nlpOpen, setNlpOpen] = useState(false);
+  const [nlpInput, setNlpInput] = useState('');
+  const [nlpResult, setNlpResult] = useState<DateNormalizationResult | null>(null);
+  const [nlpBusy, setNlpBusy] = useState(false);
+  const [nlpError, setNlpError] = useState<string | null>(null);
+
+  const api = useCloud((s) => s.api);
+  const user = useCloud((s) => s.user);
+  const projectId = useEditor((s) => s.remote?.projectId);
 
   // Follow external changes (undo, import, switching events).
   useEffect(() => {
@@ -48,9 +65,124 @@ export function DateField({
     (yearMissing ? 'Enter a year' : value && !parsed ? `“${value}” is not a valid date` : null);
   const preview = parsed && value ? formatDate(value, locale) : null;
 
+  const runNlpParse = async (useLlm: boolean) => {
+    const q = nlpInput.trim();
+    if (!q) return;
+    setNlpError(null);
+    const local = normalizeNaturalDateDeterministic(q);
+    if (local.date || !useLlm || !api?.aiNormalizeDate || !user) {
+      setNlpResult(local);
+      return;
+    }
+    setNlpBusy(true);
+    try {
+      const remote = await api.aiNormalizeDate({ text: q, useLlm: true, projectId });
+      setNlpResult(remote);
+    } catch (err) {
+      setNlpError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setNlpBusy(false);
+    }
+  };
+
   return (
     <fieldset aria-describedby={shownError ? `${id}-err` : `${id}-preview`}>
-      <legend className="label">{legend}</legend>
+      <div className="mb-1 flex items-center justify-between gap-2">
+        <legend className="label mb-0">{legend}</legend>
+        <button
+          type="button"
+          className="btn-ghost px-1.5 py-0.5 text-[11px]"
+          onClick={() => {
+            setNlpOpen((o) => !o);
+            setNlpError(null);
+          }}
+        >
+          <Sparkles size={11} aria-hidden /> {nlpOpen ? 'Close parser' : 'Parse text'}
+        </button>
+      </div>
+
+      {nlpOpen && (
+        <div className="mb-2 space-y-2 rounded-md border border-blue-200 bg-blue-50/60 p-2.5">
+          <label htmlFor={`${id}-nlp`} className="block text-xs font-medium text-slate-800">
+            Natural language date (e.g. “summer of &apos;69”, “early 20th century”)
+          </label>
+          <div className="flex gap-1.5">
+            <input
+              id={`${id}-nlp`}
+              className="input bg-white text-xs"
+              placeholder="e.g. circa 44 BC"
+              value={nlpInput}
+              onChange={(e) => {
+                const next = e.target.value;
+                setNlpInput(next);
+                setNlpResult(next.trim() ? normalizeNaturalDateDeterministic(next) : null);
+                setNlpError(null);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  void runNlpParse(true);
+                }
+              }}
+            />
+            {api?.aiNormalizeDate && user && (
+              <button
+                type="button"
+                className="btn-secondary shrink-0 px-2 py-1 text-xs"
+                disabled={!nlpInput.trim() || nlpBusy}
+                onClick={() => void runNlpParse(true)}
+              >
+                {nlpBusy ? '…' : 'Ask AI'}
+              </button>
+            )}
+          </div>
+          {nlpError && (
+            <p className="text-xs text-red-700" role="alert">
+              {nlpError}
+            </p>
+          )}
+          {nlpResult?.date && (
+            <div className="space-y-1.5 rounded border border-slate-200 bg-white p-2 text-xs">
+              <div className="flex items-center justify-between gap-2">
+                <span className="font-mono font-medium text-slate-900">
+                  {nlpResult.date.start}
+                  {nlpResult.date.end ? ` → ${nlpResult.date.end}` : ''}
+                </span>
+                <span
+                  className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${
+                    nlpResult.aiGenerated
+                      ? 'bg-purple-100 text-purple-800'
+                      : 'bg-slate-100 text-slate-700'
+                  }`}
+                >
+                  {nlpResult.aiGenerated ? 'AI suggestion' : 'Parsed'}
+                </span>
+              </div>
+              <p className="text-slate-600">{nlpResult.reasoning}</p>
+              <div className="flex justify-end gap-1.5">
+                <button
+                  type="button"
+                  className="btn-primary px-2 py-1 text-xs"
+                  onClick={() => {
+                    if (!nlpResult.date) return;
+                    if (onApplyNormalized) onApplyNormalized(nlpResult.date);
+                    else onChange(nlpResult.date.start);
+                    setNlpOpen(false);
+                    setNlpInput('');
+                    setNlpResult(null);
+                  }}
+                >
+                  Apply
+                </button>
+              </div>
+            </div>
+          )}
+          {nlpResult && !nlpResult.date && (
+            <p className="text-xs text-slate-600">{nlpResult.reasoning}</p>
+          )}
+        </div>
+      )}
+
       <div className="grid grid-cols-[1fr_auto] gap-1.5 sm:grid-cols-[5rem_auto_1fr_4.5rem]">
         <div>
           <label htmlFor={`${id}-year`} className="sr-only">

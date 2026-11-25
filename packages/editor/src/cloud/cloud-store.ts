@@ -40,7 +40,19 @@ export type Api = Pick<
   | 'revokeApiKey'
   | 'pageUrl'
   | 'embedUrl'
->;
+> &
+  Partial<
+    Pick<
+      ChronicleApi,
+      | 'getAiStatus'
+      | 'aiExtractText'
+      | 'aiExtractFile'
+      | 'aiSummarize'
+      | 'aiAltText'
+      | 'aiNormalizeDate'
+      | 'aiDetectConflicts'
+    >
+  >;
 
 export interface CloudState {
   /** Null when no server is configured (local-only mode). */

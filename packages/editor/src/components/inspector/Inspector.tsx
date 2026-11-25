@@ -1,6 +1,7 @@
-import { useMemo } from 'react';
-import { Copy, MousePointerClick, Trash2 } from 'lucide-react';
+import { useMemo, useState } from 'react';
+import { Copy, MousePointerClick, Sparkles, Trash2 } from 'lucide-react';
 import type { TimelineEvent } from '@chronicle/schema';
+import { useCloud } from '../../cloud/cloud-store.js';
 import { useEditor, selectSelectedEvent } from '../../store/editor-store.js';
 import { patchObject, updateEvent } from '../../store/commands.js';
 import { addNewEvent, deleteSelected, duplicateSelected } from '../../actions.js';
@@ -34,9 +35,16 @@ export function Inspector() {
 function EventForm({ event }: { event: TimelineEvent }) {
   const execute = useEditor((s) => s.execute);
   const doc = useEditor((s) => s.doc);
+  const projectId = useEditor((s) => s.remote?.projectId);
   const setSidebarTab = useEditor((s) => s.setSidebarTab);
+  const api = useCloud((s) => s.api);
+  const user = useCloud((s) => s.user);
   const issues = useIssues();
   const tagSuggestions = useMemo(() => allTags(doc), [doc]);
+
+  const [summaryBusy, setSummaryBusy] = useState(false);
+  const [summarySuggestion, setSummarySuggestion] = useState<string | null>(null);
+  const [summaryError, setSummaryError] = useState<string | null>(null);
 
   const fieldError = (field: string) =>
     issues
@@ -104,6 +112,9 @@ function EventForm({ event }: { event: TimelineEvent }) {
           error={fieldError('date.start')}
           onChange={(start) => {
             updateDate({ start });
+          }}
+          onApplyNormalized={(normalized) => {
+            update({ date: normalized });
           }}
         />
 
@@ -183,7 +194,42 @@ function EventForm({ event }: { event: TimelineEvent }) {
         </Field>
       </Section>
 
-      <Section title="Description">
+      <Section
+        title="Description"
+        actions={
+          api?.aiSummarize && user && event.body?.trim() ? (
+            <button
+              type="button"
+              className="btn-ghost px-2 py-1 text-xs"
+              disabled={summaryBusy}
+              onClick={() => {
+                if (!api.aiSummarize || !event.body?.trim()) return;
+                setSummaryBusy(true);
+                setSummaryError(null);
+                void api
+                  .aiSummarize({
+                    eventId: event.id,
+                    projectId,
+                    title: event.title || 'Untitled event',
+                    body: event.body,
+                  })
+                  .then((res) => {
+                    setSummarySuggestion(res.summary);
+                  })
+                  .catch((err: unknown) => {
+                    setSummaryError(err instanceof Error ? err.message : String(err));
+                  })
+                  .finally(() => {
+                    setSummaryBusy(false);
+                  });
+              }}
+            >
+              <Sparkles size={13} aria-hidden />
+              {summaryBusy ? 'Summarizing…' : 'Suggest summary'}
+            </button>
+          ) : undefined
+        }
+      >
         <RichTextEditor
           label="Event description"
           value={event.body ?? ''}
@@ -191,11 +237,60 @@ function EventForm({ event }: { event: TimelineEvent }) {
             update({ body: body.trim() ? body : undefined });
           }}
         />
+        {summaryError && (
+          <p className="text-xs text-red-700" role="alert">
+            {summaryError}
+          </p>
+        )}
+        {summarySuggestion && (
+          <div className="space-y-2 rounded-md border border-purple-200 bg-purple-50/70 p-2.5 text-xs">
+            <div className="flex items-center justify-between">
+              <span className="inline-flex items-center gap-1 font-medium text-purple-900">
+                <Sparkles size={12} aria-hidden /> AI summary suggestion — review before applying
+              </span>
+            </div>
+            <p className="text-slate-800">{summarySuggestion}</p>
+            <div className="flex flex-wrap justify-end gap-1.5">
+              <button
+                type="button"
+                className="btn-ghost px-2 py-1 text-xs"
+                onClick={() => {
+                  setSummarySuggestion(null);
+                }}
+              >
+                Dismiss
+              </button>
+              <button
+                type="button"
+                className="btn-secondary px-2 py-1 text-xs"
+                onClick={() => {
+                  update({
+                    body: event.body ? `${summarySuggestion}\n\n${event.body}` : summarySuggestion,
+                  });
+                  setSummarySuggestion(null);
+                }}
+              >
+                Prepend
+              </button>
+              <button
+                type="button"
+                className="btn-primary px-2 py-1 text-xs"
+                onClick={() => {
+                  update({ body: summarySuggestion });
+                  setSummarySuggestion(null);
+                }}
+              >
+                Replace body
+              </button>
+            </div>
+          </div>
+        )}
       </Section>
 
       <Section title="Media">
         <MediaManager
           media={event.media}
+          eventTitle={event.title}
           onChange={(media) => {
             update({ media });
           }}

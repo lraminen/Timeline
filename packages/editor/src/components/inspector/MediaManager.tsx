@@ -1,5 +1,5 @@
 import { useId, useState } from 'react';
-import { ArrowUpToLine, ImagePlus, Link as LinkIcon, Trash2, Upload } from 'lucide-react';
+import { ArrowUpToLine, ImagePlus, Link as LinkIcon, Sparkles, Trash2, Upload } from 'lucide-react';
 import { getOEmbedUrl } from '@chronicle/core';
 import { isSafeMediaUrl, type TimelineMedia } from '@chronicle/schema';
 import { guessMediaType } from '../../lib/import-csv.js';
@@ -39,12 +39,14 @@ function readAsDataUrl(file: File): Promise<string> {
 function MediaItem({
   media,
   index,
+  eventTitle,
   onChange,
   onRemove,
   onMakePrimary,
 }: {
   media: TimelineMedia;
   index: number;
+  eventTitle?: string;
   onChange: (patch: Partial<TimelineMedia>) => void;
   onRemove: () => void;
   onMakePrimary?: () => void;
@@ -52,6 +54,33 @@ function MediaItem({
   const safe = isSafeMediaUrl(media.url, dataKind(media.type));
   const embed = media.type === 'oembed' || media.type === 'map' ? getOEmbedUrl(media.url) : null;
   const isDataUrl = media.url.startsWith('data:');
+  const api = useCloud((s) => s.api);
+  const user = useCloud((s) => s.user);
+  const projectId = useEditor((s) => s.remote?.projectId);
+  const [altBusy, setAltBusy] = useState(false);
+  const [altSuggestion, setAltSuggestion] = useState<{ altText: string; confidence: number } | null>(
+    null,
+  );
+  const [altError, setAltError] = useState<string | null>(null);
+
+  const suggestAlt = async () => {
+    if (!api?.aiAltText || !user) return;
+    setAltBusy(true);
+    setAltError(null);
+    try {
+      const res = await api.aiAltText({
+        ...(isDataUrl ? { imageDataUrl: media.url } : { imageUrl: media.url }),
+        eventTitle,
+        caption: media.caption,
+        projectId,
+      });
+      setAltSuggestion({ altText: res.altText, confidence: res.confidence });
+    } catch (err) {
+      setAltError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setAltBusy(false);
+    }
+  };
 
   return (
     <li className="space-y-2 rounded-md border border-slate-200 bg-white p-3">
@@ -128,22 +157,76 @@ function MediaItem({
         )}
       </Field>
       {media.type === 'image' && (
-        <Field
-          label="Alt text"
-          hint="Describe the image for people who can't see it."
-          error={media.alt?.trim() ? null : 'Alt text is recommended for images'}
-        >
-          {(p) => (
-            <input
-              {...p}
-              className="input"
-              value={media.alt ?? ''}
-              onChange={(e) => {
-                onChange({ alt: e.target.value || undefined });
-              }}
-            />
+        <div className="space-y-1.5">
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-xs font-medium text-slate-700">Alt text</span>
+            {api?.aiAltText && user && safe && (
+              <button
+                type="button"
+                className="btn-ghost px-1.5 py-0.5 text-[11px]"
+                disabled={altBusy}
+                onClick={() => void suggestAlt()}
+              >
+                <Sparkles size={11} aria-hidden />
+                {altBusy ? 'Generating…' : 'Suggest alt text'}
+              </button>
+            )}
+          </div>
+          <Field
+            label="Alt text"
+            className="[&>label]:sr-only"
+            hint="Describe the image for people who can't see it."
+            error={media.alt?.trim() ? null : 'Alt text is recommended for images'}
+          >
+            {(p) => (
+              <input
+                {...p}
+                className="input"
+                value={media.alt ?? ''}
+                onChange={(e) => {
+                  onChange({ alt: e.target.value || undefined });
+                }}
+              />
+            )}
+          </Field>
+          {altError && (
+            <p className="text-xs text-red-700" role="alert">
+              {altError}
+            </p>
           )}
-        </Field>
+          {altSuggestion && (
+            <div className="space-y-1.5 rounded border border-purple-200 bg-purple-50/70 p-2 text-xs">
+              <div className="flex items-center justify-between">
+                <span className="inline-flex items-center gap-1 font-medium text-purple-900">
+                  <Sparkles size={11} aria-hidden /> AI alt-text suggestion (
+                  {String(Math.round(altSuggestion.confidence * 100))}%)
+                </span>
+              </div>
+              <p className="text-slate-800">{altSuggestion.altText}</p>
+              <div className="flex justify-end gap-1.5">
+                <button
+                  type="button"
+                  className="btn-ghost px-2 py-0.5 text-xs"
+                  onClick={() => {
+                    setAltSuggestion(null);
+                  }}
+                >
+                  Dismiss
+                </button>
+                <button
+                  type="button"
+                  className="btn-primary px-2 py-0.5 text-xs"
+                  onClick={() => {
+                    onChange({ alt: altSuggestion.altText });
+                    setAltSuggestion(null);
+                  }}
+                >
+                  Apply
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
       )}
       <div className="grid grid-cols-2 gap-2">
         <Field label="Caption">
@@ -177,9 +260,11 @@ function MediaItem({
 
 export function MediaManager({
   media,
+  eventTitle,
   onChange,
 }: {
   media: TimelineMedia[];
+  eventTitle?: string;
   onChange: (media: TimelineMedia[]) => void;
 }) {
   const id = useId();
@@ -255,6 +340,7 @@ export function MediaManager({
               key={i}
               media={m}
               index={i}
+              eventTitle={eventTitle}
               onChange={(patch) => {
                 onChange(media.map((item, j) => (j === i ? { ...item, ...patch } : item)));
               }}

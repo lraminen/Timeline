@@ -3,6 +3,7 @@ import * as Tabs from '@radix-ui/react-tabs';
 import { X } from 'lucide-react';
 import { JsonImport } from './JsonImport.js';
 import { CsvImport } from './CsvImport.js';
+import { AiExtractImport } from './AiExtractImport.js';
 
 export function ImportDialog({
   open,
@@ -38,6 +39,7 @@ export function ImportDialog({
               {[
                 ['csv', 'Spreadsheet (CSV)'],
                 ['json', 'JSON / TimelineJS'],
+                ['ai', 'AI Document Extract'],
               ].map(([value, label]) => (
                 <Tabs.Trigger
                   key={value}
@@ -54,6 +56,9 @@ export function ImportDialog({
               </Tabs.Content>
               <Tabs.Content value="json">
                 <JsonImport onDone={done} />
+              </Tabs.Content>
+              <Tabs.Content value="ai">
+                <AiExtractImport onDone={done} />
               </Tabs.Content>
             </div>
           </Tabs.Root>

@@ -61,8 +61,30 @@ const EnvSchema = z
 
     RATE_LIMIT_PER_MINUTE: z.coerce.number().int().positive().default(300),
     AUTH_RATE_LIMIT_PER_MINUTE: z.coerce.number().int().positive().default(10),
+
+    /** Pluggable AI provider for Phase 5 assistive workflows. */
+    AI_PROVIDER: z.enum(['none', 'openai', 'gemini', 'anthropic', 'ollama']).default('none'),
+    AI_API_KEY: z.string().optional(),
+    AI_MODEL: z.string().optional(),
+    AI_BASE_URL: z.string().url().optional(),
+    AI_DAILY_REQUEST_LIMIT: z.coerce.number().int().positive().default(100),
+    AI_DAILY_TOKEN_LIMIT: z.coerce.number().int().positive().default(500_000),
+    AI_MAX_DOCUMENT_KB: z.coerce.number().int().positive().default(1024),
+    AI_ALLOW_URL_FETCH: bool.default('true'),
   })
   .superRefine((env, ctx) => {
+    if (
+      (env.AI_PROVIDER === 'openai' ||
+        env.AI_PROVIDER === 'gemini' ||
+        env.AI_PROVIDER === 'anthropic') &&
+      !env.AI_API_KEY
+    ) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['AI_API_KEY'],
+        message: `is required when AI_PROVIDER=${env.AI_PROVIDER}`,
+      });
+    }
     if (env.NODE_ENV === 'production') {
       if (!env.JWT_SECRET || env.JWT_SECRET.length < 32) {
         ctx.addIssue({

@@ -22,6 +22,7 @@ import { Inspector } from './components/inspector/Inspector.js';
 import { PreviewCanvas } from './components/PreviewCanvas.js';
 import { StatusBar } from './components/StatusBar.js';
 import { DraftsDialog } from './components/DraftsDialog.js';
+import { ConflictsDialog } from './components/ConflictsDialog.js';
 
 // Loaded on first use: pulls in the CSV and JSON-position parsers.
 const ImportDialog = lazy(() =>
@@ -36,6 +37,7 @@ export function App({ offlineReady = false }: { offlineReady?: boolean }) {
   const [publishOpen, setPublishOpen] = useState(false);
   const [openServerOpen, setOpenServerOpen] = useState(false);
   const [issuesOpen, setIssuesOpen] = useState(false);
+  const [conflictsOpen, setConflictsOpen] = useState(false);
   const [notice, setNotice] = useState<{ text: string; tone: 'info' | 'error' } | null>(null);
   const { status, saveNow } = useAutosave(ready);
 
@@ -194,8 +196,13 @@ export function App({ offlineReady = false }: { offlineReady?: boolean }) {
           offlineReady={offlineReady}
           issuesOpen={issuesOpen}
           onIssuesOpenChange={setIssuesOpen}
+          onOpenConflicts={() => {
+            setConflictsOpen(true);
+          }}
         />
       </div>
+
+      <ConflictsDialog open={conflictsOpen} onOpenChange={setConflictsOpen} />
 
       {importOpen && (
         <Suspense fallback={null}>

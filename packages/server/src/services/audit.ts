@@ -22,7 +22,12 @@ export type AuditAction =
   | 'share_link.revoke_all'
   | 'media.upload'
   | 'media.rejected'
-  | 'media.delete';
+  | 'media.delete'
+  | 'ai.extract'
+  | 'ai.summarize'
+  | 'ai.alt_text'
+  | 'ai.normalize_date'
+  | 'ai.detect_conflicts';
 
 export interface AuditEntry {
   action: AuditAction;

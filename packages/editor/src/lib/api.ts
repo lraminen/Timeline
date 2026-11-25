@@ -1,4 +1,11 @@
 import type { Timeline } from '@chronicle/schema';
+import type {
+  AltTextSuggestion,
+  ConflictDetectionResult,
+  DateNormalizationResult,
+  ExtractionResult,
+  SummarySuggestion,
+} from '@chronicle/ai';
 
 /**
  * Client for the Chronicle server API.
@@ -43,6 +50,22 @@ export interface UploadedMedia {
   mimeType: string;
   width?: number;
   height?: number;
+}
+
+export interface AiStatus {
+  configured: boolean;
+  provider: string | null;
+  model: string | null;
+  supportsVision: boolean;
+  usageToday: {
+    requests: number;
+    tokens: number;
+    estimatedCostUsd: number;
+  };
+  limits: {
+    dailyRequests: number;
+    dailyTokens: number;
+  };
 }
 
 export class ApiRequestError extends Error {
@@ -235,6 +258,68 @@ export class ChronicleApi {
 
   async revokeApiKey(id: string): Promise<void> {
     await this.request(`/api-keys/${id}`, { method: 'DELETE' });
+  }
+
+  // --- AI assistive features (Phase 5) ----------------------------------
+
+  getAiStatus(): Promise<AiStatus> {
+    return this.request('/ai/status');
+  }
+
+  aiExtractText(input: {
+    text?: string;
+    url?: string;
+    documentTitle?: string;
+    projectId?: string;
+  }): Promise<ExtractionResult> {
+    return this.request('/ai/extract', this.json('POST', input));
+  }
+
+  aiExtractFile(
+    file: File,
+    options?: { documentTitle?: string; projectId?: string },
+  ): Promise<ExtractionResult> {
+    const form = new FormData();
+    if (options?.projectId) form.append('projectId', options.projectId);
+    if (options?.documentTitle) form.append('documentTitle', options.documentTitle);
+    form.append('file', file, file.name);
+    return this.request('/ai/extract', { method: 'POST', body: form });
+  }
+
+  aiSummarize(input: {
+    title: string;
+    body: string;
+    eventId?: string;
+    projectId?: string;
+    maxLength?: number;
+  }): Promise<SummarySuggestion> {
+    return this.request('/ai/summarize', this.json('POST', input));
+  }
+
+  aiAltText(input: {
+    imageUrl?: string;
+    imageDataUrl?: string;
+    eventTitle?: string;
+    caption?: string;
+    projectId?: string;
+  }): Promise<AltTextSuggestion> {
+    return this.request('/ai/alt-text', this.json('POST', input));
+  }
+
+  aiNormalizeDate(input: {
+    text: string;
+    useLlm?: boolean;
+    projectId?: string;
+  }): Promise<DateNormalizationResult> {
+    return this.request('/ai/normalize-date', this.json('POST', input));
+  }
+
+  aiDetectConflicts(input: {
+    timeline: Timeline;
+    includeSemantic?: boolean;
+    projectId?: string;
+  }): Promise<ConflictDetectionResult> {
+    return this.request('/ai/detect-conflicts', this.json('POST', input));
   }
 
   // --- Public URLs ------------------------------------------------------

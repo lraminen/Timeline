@@ -42,6 +42,25 @@ importers:
         specifier: ^2.0.0
         version: 2.1.9(@types/node@22.20.5)(jsdom@25.0.1)(terser@5.51.2)
 
+  packages/ai:
+    dependencies:
+      '@chronicle/schema':
+        specifier: workspace:*
+        version: link:../schema
+      zod:
+        specifier: ^3.23.0
+        version: 3.25.76
+    devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.20.5
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.9
+        version: 2.1.9(@types/node@22.20.5)(jsdom@25.0.1)(terser@5.51.2)
+
   packages/cli:
     dependencies:
       '@chronicle/core':
@@ -72,6 +91,9 @@ importers:
 
   packages/editor:
     dependencies:
+      '@chronicle/ai':
+        specifier: workspace:*
+        version: link:../ai
       '@chronicle/core':
         specifier: workspace:*
         version: link:../core
@@ -227,6 +249,9 @@ importers:
       '@aws-sdk/client-s3':
         specifier: 3.716.0
         version: 3.716.0
+      '@chronicle/ai':
+        specifier: workspace:*
+        version: link:../ai
       '@chronicle/core':
         specifier: workspace:*
         version: link:../core
