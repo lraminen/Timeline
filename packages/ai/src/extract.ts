@@ -1,6 +1,7 @@
 import { TimelineDateSchema, TimelineLocationSchema } from '@chronicle/schema';
 import { z } from 'zod';
 import { emptyUsage, mergeUsage } from './providers.js';
+import { parseHtmlToText } from './text-cleanup.js';
 import type {
   AiProvider,
   AiUsage,
@@ -9,6 +10,8 @@ import type {
   ExtractionResult,
 } from './types.js';
 
+export { parseHtmlToText };
+
 export interface TextChunk {
   index: number;
   text: string;
@@ -16,49 +19,12 @@ export interface TextChunk {
   endOffset: number;
 }
 
-/** Strips HTML tags, head, title, scripts, styles, and entities into readable plain text. */
-export function parseHtmlToText(html: string): string {
-  const withoutScripts = html
-    .replace(/<head\b[^>]*>[\s\S]*?<\/head>/gi, ' ')
-    .replace(/<title\b[^>]*>[\s\S]*?<\/title>/gi, ' ')
-    .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, ' ')
-    .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, ' ')
-    .replace(/<noscript\b[^>]*>[\s\S]*?<\/noscript>/gi, ' ');
-
-  const withBreaks = withoutScripts
-    .replace(/<\/(p|div|li|h[1-6]|tr|blockquote|section|article)>/gi, '\n\n')
-    .replace(/<br\s*\/?>/gi, '\n')
-    .replace(/<[^>]+>/g, ' ');
-
-  const decoded = withBreaks
-    .replace(/&nbsp;/gi, ' ')
-    .replace(/&amp;/gi, '&')
-    .replace(/&lt;/gi, '<')
-    .replace(/&gt;/gi, '>')
-    .replace(/&quot;/gi, '"')
-    .replace(/&#39;|&apos;/gi, "'")
-    .replace(/&#(\d+);/g, (_m, n: string) => {
-      const code = Number(n);
-      return Number.isFinite(code) && code > 0 && code < 0x110000 ? String.fromCodePoint(code) : ' ';
-    });
-
-  return decoded
-    .replace(/[ \t]+\n/g, '\n')
-    .replace(/\n{3,}/g, '\n\n')
-    .replace(/[ \t]{2,}/g, ' ')
-    .trim();
-}
-
 /**
  * Splits a document into overlapping character chunks aligned to paragraph or
  * sentence boundaries so large documents can be batch-processed without
  * severing event context.
  */
-export function chunkDocument(
-  text: string,
-  chunkSize = 6000,
-  overlap = 400,
-): TextChunk[] {
+export function chunkDocument(text: string, chunkSize = 6000, overlap = 400): TextChunk[] {
   const clean = text.trim();
   if (!clean) return [];
   const safeSize = Math.max(500, chunkSize);
@@ -101,7 +67,7 @@ export function chunkDocument(
   return chunks;
 }
 
-/** Finds the offset of a quote in the source chunk (exact first, then whitespace-collapsed). */
+/** Finds the offset of a quote in the source chunk (exact first, then case-insensitive). */
 export function locateCitation(
   sourceText: string,
   quote: string,
@@ -127,22 +93,66 @@ export function locateCitation(
 }
 
 const RawExtractedEventSchema = z.object({
-  title: z.string().min(1),
+  title: z.string().trim().min(1),
   date: TimelineDateSchema,
   body: z.string().optional(),
   tags: z.array(z.string()).default([]),
   location: TimelineLocationSchema.optional().nullable(),
   citation: z.object({
-    quote: z.string().min(1),
+    quote: z.string().trim().min(1),
     section: z.string().optional(),
   }),
   confidence: z.number().min(0).max(1).default(0.75),
 });
 
+/** Tolerant chunk envelope so one malformed event does not fail the entire extraction. */
 const ChunkExtractionResponseSchema = z.object({
   documentTitle: z.string().optional(),
-  events: z.array(RawExtractedEventSchema).default([]),
+  events: z.array(z.unknown()).default([]),
 });
+
+/** Explicit structured JSON schema hint for providers with constrained decoding. */
+const WireChunkExtractionSchema = z.object({
+  documentTitle: z.string().optional(),
+  events: z.array(
+    z.object({
+      title: z.string(),
+      date: z.object({
+        start: z.string(),
+        end: z.string().optional(),
+        approximate: z.boolean().optional(),
+        uncertain: z.boolean().optional(),
+        displayOverride: z.string().optional(),
+      }),
+      body: z.string().optional(),
+      tags: z.array(z.string()).optional(),
+      location: z
+        .object({
+          lat: z.number(),
+          lng: z.number(),
+          label: z.string().optional(),
+          zoom: z.number().optional(),
+        })
+        .nullable()
+        .optional(),
+      citation: z.object({
+        quote: z.string(),
+        section: z.string().optional(),
+      }),
+      confidence: z.number(),
+    }),
+  ),
+});
+
+function parseIndividualEvent(raw: unknown): z.infer<typeof RawExtractedEventSchema> | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const copy = { ...(raw as Record<string, unknown>) };
+  if (typeof copy.confidence === 'number' && copy.confidence > 1 && copy.confidence <= 100) {
+    copy.confidence = copy.confidence / 100;
+  }
+  const parsed = RawExtractedEventSchema.safeParse(copy);
+  return parsed.success ? parsed.data : null;
+}
 
 function normaliseKey(title: string, start: string): string {
   return `${start.trim()}::${title
@@ -181,6 +191,8 @@ export async function extractEventsFromDocument(
     return {
       events: [],
       documentTitle: options.documentTitle,
+      sourceText: '',
+      droppedEvents: 0,
       totalChunks: 0,
       processedChunks: 0,
       truncated: false,
@@ -200,6 +212,7 @@ export async function extractEventsFromDocument(
   let usage: AiUsage = emptyUsage();
   let detectedTitle = options.documentTitle;
   const collected: ExtractedEventSuggestion[] = [];
+  let droppedEvents = 0;
   let candidateCounter = 0;
 
   for (let i = 0; i < chunksToProcess.length; i++) {
@@ -209,6 +222,7 @@ export async function extractEventsFromDocument(
     const res = await provider.completeStructured({
       schemaName: 'ExtractedEvents',
       schema: ChunkExtractionResponseSchema,
+      wireSchema: WireChunkExtractionSchema,
       system: [
         'Extract chronological events from the provided document excerpt for a historical/project timeline.',
         'For each event return:',
@@ -227,22 +241,32 @@ export async function extractEventsFromDocument(
     });
 
     usage = mergeUsage(usage, res.usage);
+    await options.onChunkUsage?.(res.usage);
+
     if (!detectedTitle && res.data.documentTitle?.trim()) {
       detectedTitle = res.data.documentTitle.trim();
     }
 
-    for (const raw of res.data.events) {
+    for (const rawItem of res.data.events) {
+      const raw = parseIndividualEvent(rawItem);
+      if (!raw) {
+        droppedEvents += 1;
+        continue;
+      }
       const offsets = locateCitation(chunk.text, raw.citation.quote, chunk.startOffset);
       candidateCounter += 1;
       collected.push({
         id: `ai-cand-${String(candidateCounter)}`,
-        title: raw.title.trim(),
+        title: raw.title,
         date: raw.date,
         body: raw.body?.trim() || undefined,
-        tags: raw.tags.map((t) => t.trim()).filter(Boolean).slice(0, 8),
+        tags: raw.tags
+          .map((t) => t.trim())
+          .filter(Boolean)
+          .slice(0, 8),
         ...(raw.location ? { location: raw.location } : {}),
         citation: {
-          quote: raw.citation.quote.trim(),
+          quote: raw.citation.quote,
           ...(raw.citation.section ? { section: raw.citation.section.trim() } : {}),
           ...offsets,
         },
@@ -259,6 +283,8 @@ export async function extractEventsFromDocument(
   return {
     events: deduped,
     documentTitle: detectedTitle,
+    sourceText: clean,
+    droppedEvents,
     totalChunks: allChunks.length,
     processedChunks: chunksToProcess.length,
     truncated,

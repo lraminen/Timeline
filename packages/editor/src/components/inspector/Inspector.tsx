@@ -92,6 +92,22 @@ function EventForm({ event }: { event: TimelineEvent }) {
           </div>
         }
       >
+        {event.aiGenerated && (
+          <div className="flex items-center justify-between rounded bg-purple-50 px-2 py-1 text-xs text-purple-900">
+            <span className="inline-flex items-center gap-1 font-medium">
+              <Sparkles size={12} aria-hidden /> AI-assisted event
+            </span>
+            <button
+              type="button"
+              className="text-[11px] underline"
+              onClick={() => {
+                update({ aiGenerated: undefined });
+              }}
+            >
+              Clear label
+            </button>
+          </div>
+        )}
         <Field label="Title" error={event.title.trim() ? null : 'Title is required'}>
           {(p) => (
             <input
@@ -137,6 +153,9 @@ function EventForm({ event }: { event: TimelineEvent }) {
               error={fieldError('date.end')}
               onChange={(end) => {
                 updateDate({ end });
+              }}
+              onApplyNormalized={(normalized) => {
+                updateDate({ end: normalized.end ?? normalized.start });
               }}
             />
             <button
@@ -266,6 +285,7 @@ function EventForm({ event }: { event: TimelineEvent }) {
                 onClick={() => {
                   update({
                     body: event.body ? `${summarySuggestion}\n\n${event.body}` : summarySuggestion,
+                    aiGenerated: true,
                   });
                   setSummarySuggestion(null);
                 }}
@@ -276,7 +296,7 @@ function EventForm({ event }: { event: TimelineEvent }) {
                 type="button"
                 className="btn-primary px-2 py-1 text-xs"
                 onClick={() => {
-                  update({ body: summarySuggestion });
+                  update({ body: summarySuggestion, aiGenerated: true });
                   setSummarySuggestion(null);
                 }}
               >

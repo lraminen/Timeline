@@ -76,6 +76,23 @@ describe('<chronicle-timeline>', () => {
     expect(inner(el).classList.contains('chronicle-container--horizontal')).toBe(true);
   });
 
+  it('migrates date forms published by older releases instead of refusing the timeline', () => {
+    const { el, events } = create();
+    el.data = {
+      ...VALID,
+      events: [
+        { id: 'a', date: { start: '1957-10-4' }, title: 'Sputnik' },
+        { id: 'b', date: { start: '1969-02-31' }, title: 'Impossible day' },
+      ],
+    };
+    document.body.appendChild(el);
+
+    expect(events.filter((e) => e.type === 'chronicle:error')).toHaveLength(0);
+    expect(el.shadowRoot?.querySelectorAll('.chronicle-event')).toHaveLength(2);
+    expect(el.data?.events[0]?.date.start).toBe('1957-10-04');
+    expect(el.data?.events[1]?.date).toMatchObject({ start: '1969-02', uncertain: true });
+  });
+
   it('rejects schema-invalid data with a readable chronicle:error and renders nothing', () => {
     const { el, events } = create();
     document.body.appendChild(el);

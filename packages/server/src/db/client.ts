@@ -2,6 +2,7 @@ import { fileURLToPath } from 'node:url';
 import { mkdirSync } from 'node:fs';
 import type { PgDatabase, PgQueryResultHKT } from 'drizzle-orm/pg-core';
 import * as schema from './schema.js';
+import { runDataMigrations, type DataMigrationResult } from './data-migrations.js';
 import type { Config } from '../config.js';
 
 /** Either driver (PGlite or node-postgres) behind one type. */
@@ -10,7 +11,8 @@ export type Db = PgDatabase<PgQueryResultHKT, typeof schema>;
 export interface Database {
   db: Db;
   driver: 'pglite' | 'postgres';
-  migrate: () => Promise<void>;
+  /** Applies pending SQL migrations, then pending data migrations; returns the data migrations that ran. */
+  migrate: () => Promise<DataMigrationResult[]>;
   close: () => Promise<void>;
 }
 
@@ -34,7 +36,10 @@ export async function openDatabase(
     return {
       db: db as unknown as Db,
       driver: 'postgres',
-      migrate: () => migrate(db, { migrationsFolder: MIGRATIONS }),
+      migrate: async () => {
+        await migrate(db, { migrationsFolder: MIGRATIONS });
+        return runDataMigrations(db);
+      },
       close: () => pool.end(),
     };
   }
@@ -48,7 +53,10 @@ export async function openDatabase(
   return {
     db: db as unknown as Db,
     driver: 'pglite',
-    migrate: () => migrate(db, { migrationsFolder: MIGRATIONS }),
+    migrate: async () => {
+      await migrate(db, { migrationsFolder: MIGRATIONS });
+      return runDataMigrations(db);
+    },
     close: () => client.close(),
   };
 }

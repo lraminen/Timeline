@@ -22,6 +22,8 @@ export interface AiCompletionRequest<T> {
   system: string;
   prompt: string;
   schema: z.ZodType<T, z.ZodTypeDef, unknown>;
+  /** Optional simpler JSON-schema wire model for providers supporting constrained decoding. */
+  wireSchema?: z.ZodType<unknown, z.ZodTypeDef, unknown>;
   schemaName: string;
   maxTokens?: number;
   temperature?: number;
@@ -41,7 +43,9 @@ export interface AiProvider {
   readonly model: string;
   readonly supportsVision: boolean;
   completeStructured<T>(request: AiCompletionRequest<T>): Promise<AiCompletionResult<T>>;
-  describeImage?(request: AiImageRequest): Promise<AiCompletionResult<{ altText: string; confidence: number }>>;
+  describeImage?(
+    request: AiImageRequest,
+  ): Promise<AiCompletionResult<{ altText: string; confidence: number }>>;
 }
 
 export interface AiProviderConfig {
@@ -50,6 +54,7 @@ export interface AiProviderConfig {
   model?: string;
   baseUrl?: string;
   fetch?: typeof fetch;
+  timeoutMs?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -87,11 +92,16 @@ export interface ExtractionOptions {
   maxChunks?: number;
   documentTitle?: string;
   onProgress?: (done: number, total: number) => void;
+  onChunkUsage?: (usage: AiUsage) => void | Promise<void>;
 }
 
 export interface ExtractionResult {
   events: ExtractedEventSuggestion[];
   documentTitle?: string;
+  /** Extracted normalized source text returned so UI citation inspection works for files & URLs. */
+  sourceText?: string;
+  /** Count of malformed candidate events dropped during per-event schema validation. */
+  droppedEvents?: number;
   totalChunks: number;
   processedChunks: number;
   truncated: boolean;
@@ -168,4 +178,7 @@ export interface AltTextSuggestion {
   aiGenerated: true;
 }
 
-export type CandidateEventInput = Pick<TimelineEvent, 'id' | 'title' | 'date' | 'body' | 'tags' | 'era' | 'group'>;
+export type CandidateEventInput = Pick<
+  TimelineEvent,
+  'id' | 'title' | 'date' | 'body' | 'tags' | 'era' | 'group'
+>;

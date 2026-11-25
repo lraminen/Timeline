@@ -22,7 +22,10 @@ import { Inspector } from './components/inspector/Inspector.js';
 import { PreviewCanvas } from './components/PreviewCanvas.js';
 import { StatusBar } from './components/StatusBar.js';
 import { DraftsDialog } from './components/DraftsDialog.js';
-import { ConflictsDialog } from './components/ConflictsDialog.js';
+
+const ConflictsDialog = lazy(() =>
+  import('./components/ConflictsDialog.js').then((m) => ({ default: m.ConflictsDialog })),
+);
 
 // Loaded on first use: pulls in the CSV and JSON-position parsers.
 const ImportDialog = lazy(() =>
@@ -38,6 +41,7 @@ export function App({ offlineReady = false }: { offlineReady?: boolean }) {
   const [openServerOpen, setOpenServerOpen] = useState(false);
   const [issuesOpen, setIssuesOpen] = useState(false);
   const [conflictsOpen, setConflictsOpen] = useState(false);
+  const [conflictsMounted, setConflictsMounted] = useState(false);
   const [notice, setNotice] = useState<{ text: string; tone: 'info' | 'error' } | null>(null);
   const { status, saveNow } = useAutosave(ready);
 
@@ -197,12 +201,17 @@ export function App({ offlineReady = false }: { offlineReady?: boolean }) {
           issuesOpen={issuesOpen}
           onIssuesOpenChange={setIssuesOpen}
           onOpenConflicts={() => {
+            setConflictsMounted(true);
             setConflictsOpen(true);
           }}
         />
       </div>
 
-      <ConflictsDialog open={conflictsOpen} onOpenChange={setConflictsOpen} />
+      {(conflictsOpen || conflictsMounted) && (
+        <Suspense fallback={null}>
+          <ConflictsDialog open={conflictsOpen} onOpenChange={setConflictsOpen} />
+        </Suspense>
+      )}
 
       {importOpen && (
         <Suspense fallback={null}>

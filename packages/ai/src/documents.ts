@@ -1,292 +1,348 @@
-import { inflateRawSync, inflateSync } from 'node:zlib';
-import { lookup } from 'node:dns/promises';
+import dns from 'node:dns';
+import type { LookupAddress, LookupAllOptions, LookupOneOptions } from 'node:dns';
+import { lookup as lookupPromises } from 'node:dns/promises';
+import { existsSync } from 'node:fs';
 import net from 'node:net';
-import { parseHtmlToText } from './extract.js';
+import { availableParallelism } from 'node:os';
+import { Worker } from 'node:worker_threads';
+import ipaddr from 'ipaddr.js';
+import { Agent, fetch as undiciFetch } from 'undici';
+import {
+  extractTextFromDocxBuffer,
+  extractTextFromPdfBuffer,
+  detectDocumentFormat,
+  parseDocumentBufferDirect,
+  MAX_DOC_BYTES,
+  MAX_DOCX_UNCOMPRESSED_BYTES,
+  MAX_DOCX_COMPRESSION_RATIO,
+  type ExtractedDocument,
+} from './document-parse.js';
 
-export interface ExtractedDocument {
-  text: string;
-  format: 'txt' | 'md' | 'html' | 'docx' | 'pdf';
-  title?: string;
+export {
+  extractTextFromDocxBuffer,
+  extractTextFromPdfBuffer,
+  detectDocumentFormat,
+  MAX_DOC_BYTES,
+  MAX_DOCX_UNCOMPRESSED_BYTES,
+  MAX_DOCX_COMPRESSION_RATIO,
+  type ExtractedDocument,
+};
+
+export const PARSE_TIMEOUT_MS = 10_000;
+
+const BLOCKED_NAT64_LOCAL = ipaddr.parseCIDR('64:ff9b:1::/48');
+const BLOCKED_IPV4_COMPAT = ipaddr.parseCIDR('::/96');
+
+/**
+ * Returns `true` if `rawIp` is invalid (fail-closed) or belongs to any
+ * non-public IPv4/IPv6 range, including IPv4-mapped IPv6 (`::ffff:169.254.169.254`),
+ * NAT64 (`64:ff9b::/96`, `64:ff9b:1::/48`), link-local, loopback, ULA, or CGNAT.
+ */
+export function isPrivateIp(rawIp: string): boolean {
+  const unbracketed = rawIp.startsWith('[') && rawIp.endsWith(']') ? rawIp.slice(1, -1) : rawIp;
+  const clean = unbracketed.split('%')[0] ?? unbracketed;
+  if (!ipaddr.isValid(clean)) return true;
+
+  try {
+    const addr = ipaddr.parse(clean);
+    if (addr instanceof ipaddr.IPv4) {
+      return addr.range() !== 'unicast';
+    }
+    if (addr.isIPv4MappedAddress()) {
+      return addr.toIPv4Address().range() !== 'unicast';
+    }
+    if (addr.range() !== 'unicast') {
+      return true;
+    }
+    if (addr.match(BLOCKED_NAT64_LOCAL) || addr.match(BLOCKED_IPV4_COMPAT)) {
+      return true;
+    }
+    return false;
+  } catch {
+    return true;
+  }
 }
 
-const MAX_DOC_BYTES = 10 * 1024 * 1024; // 10 MB safety cap
+export type DnsLookupFn = (
+  hostname: string,
+  options: LookupOneOptions | LookupAllOptions,
+  callback: (
+    err: NodeJS.ErrnoException | null,
+    address: string | LookupAddress[],
+    family?: number,
+  ) => void,
+) => void;
 
-function decodeXmlEntities(xml: string): string {
-  return xml
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&apos;/g, "'");
+/**
+ * Wraps DNS resolution so `undici`'s connector validates EVERY resolved IP
+ * before connecting and binds directly to that resolved IP (preventing DNS rebinding).
+ */
+export function createSsrfSafeLookup(baseLookup: DnsLookupFn = dns.lookup) {
+  return (
+    hostname: string,
+    options: LookupOneOptions | LookupAllOptions,
+    callback: (
+      err: NodeJS.ErrnoException | null,
+      address: string | LookupAddress[],
+      family?: number,
+    ) => void,
+  ): void => {
+    baseLookup(hostname, { ...options, all: true }, (err, addresses) => {
+      if (err) {
+        callback(err, options.all ? [] : '');
+        return;
+      }
+      const list: LookupAddress[] = Array.isArray(addresses)
+        ? addresses
+        : [{ address: addresses, family: net.isIPv6(addresses) ? 6 : 4 }];
+      if (list.length === 0 || list.some((entry) => isPrivateIp(entry.address))) {
+        const blocked: NodeJS.ErrnoException = Object.assign(
+          new Error('URL resolves to a disallowed or unresolvable address'),
+          { code: 'ESSRFBLOCKED' },
+        );
+        callback(blocked, options.all ? [] : '');
+        return;
+      }
+      if (options.all) {
+        callback(null, list);
+        return;
+      }
+      const first = list[0];
+      if (!first) {
+        const blocked: NodeJS.ErrnoException = Object.assign(
+          new Error('URL resolves to a disallowed or unresolvable address'),
+          { code: 'ESSRFBLOCKED' },
+        );
+        callback(blocked, '');
+        return;
+      }
+      callback(null, first.address, first.family);
+    });
+  };
 }
 
 /**
- * Extracts `word/document.xml` from a `.docx` ZIP buffer using Node's built-in
- * `zlib.inflateRawSync` without requiring external ZIP packages.
+ * Reads an HTTP response body stream up to `maxBytes`, aborting immediately on
+ * overflow rather than buffering the entire payload in memory first.
  */
-export function extractTextFromDocxBuffer(buf: Buffer): string {
-  // Locate End of Central Directory (PK\x05\x06)
-  let eocdOffset = -1;
-  for (let i = Math.max(0, buf.length - 65557); i <= buf.length - 22; i++) {
-    if (buf.readUInt32LE(i) === 0x06054b50) {
-      eocdOffset = i;
+export async function readResponseBytesWithLimit(
+  res: Pick<Response, 'headers' | 'body'>,
+  maxBytes: number,
+): Promise<Buffer> {
+  const lenHeader = res.headers.get('content-length');
+  if (lenHeader) {
+    const declared = Number(lenHeader);
+    if (Number.isFinite(declared) && declared > maxBytes) {
+      await res.body?.cancel().catch(() => undefined);
+      throw new Error(`Remote document exceeds maximum size (${String(maxBytes)} bytes)`);
     }
   }
-  if (eocdOffset === -1) {
-    throw new Error('Invalid DOCX file: ZIP end-of-central-directory not found');
+  if (!res.body) {
+    return Buffer.alloc(0);
   }
-
-  const cdOffset = buf.readUInt32LE(eocdOffset + 16);
-  const cdEntries = buf.readUInt16LE(eocdOffset + 10);
-
-  let pos = cdOffset;
-  for (let entryIdx = 0; entryIdx < cdEntries && pos + 46 <= buf.length; entryIdx++) {
-    if (buf.readUInt32LE(pos) !== 0x02014b50) break;
-    const compressionMethod = buf.readUInt16LE(pos + 10);
-    const compressedSize = buf.readUInt32LE(pos + 20);
-    const nameLen = buf.readUInt16LE(pos + 28);
-    const extraLen = buf.readUInt16LE(pos + 30);
-    const commentLen = buf.readUInt16LE(pos + 32);
-    const localHeaderOffset = buf.readUInt32LE(pos + 42);
-    const name = buf.subarray(pos + 46, pos + 46 + nameLen).toString('utf8');
-
-    if (name === 'word/document.xml') {
-      if (localHeaderOffset + 30 > buf.length || buf.readUInt32LE(localHeaderOffset) !== 0x04034b50) {
-        throw new Error('Invalid DOCX file: malformed local file header');
+  const reader = res.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    for (;;) {
+      const step = await reader.read();
+      if (step.done) break;
+      total += step.value.byteLength;
+      if (total > maxBytes) {
+        await reader.cancel().catch(() => undefined);
+        throw new Error(`Remote document exceeds maximum size (${String(maxBytes)} bytes)`);
       }
-      const lhNameLen = buf.readUInt16LE(localHeaderOffset + 26);
-      const lhExtraLen = buf.readUInt16LE(localHeaderOffset + 28);
-      const dataStart = localHeaderOffset + 30 + lhNameLen + lhExtraLen;
-      const compressed = buf.subarray(dataStart, dataStart + compressedSize);
-
-      let xmlBuf: Buffer;
-      if (compressionMethod === 0) {
-        xmlBuf = compressed;
-      } else if (compressionMethod === 8) {
-        xmlBuf = inflateRawSync(compressed);
-      } else {
-        throw new Error(`Unsupported DOCX compression method: ${String(compressionMethod)}`);
-      }
-
-      const xml = xmlBuf.toString('utf8');
-      const text = xml
-        .replace(/<\/w:p>/g, '\n\n')
-        .replace(/<w:tab\/>/g, '\t')
-        .replace(/<w:br\s*\/?>/g, '\n')
-        .replace(/<[^>]+>/g, '');
-      return decodeXmlEntities(text)
-        .replace(/[ \t]+\n/g, '\n')
-        .replace(/\n{3,}/g, '\n\n')
-        .trim();
+      chunks.push(step.value);
     }
-
-    pos += 46 + nameLen + extraLen + commentLen;
+  } finally {
+    reader.releaseLock();
   }
-
-  throw new Error('Invalid DOCX file: word/document.xml not found');
+  return Buffer.concat(chunks);
 }
 
-function unescapePdfLiteral(raw: string): string {
-  return raw
-    .replace(/\\n/g, '\n')
-    .replace(/\\r/g, '\r')
-    .replace(/\\t/g, '\t')
-    .replace(/\\([()\\])/g, '$1')
-    .replace(/\\([0-7]{1,3})/g, (_m, oct: string) => String.fromCharCode(parseInt(oct, 8)));
+function resolveWorkerUrl(): URL | null {
+  if (import.meta.url.endsWith('.js') || import.meta.url.endsWith('.mjs')) {
+    const sibling = new URL('./document-worker.js', import.meta.url);
+    return existsSync(sibling) ? sibling : null;
+  }
+  const built = new URL('../dist/document-worker.js', import.meta.url);
+  return existsSync(built) ? built : null;
 }
 
-function extractTextFromPdfStreamText(streamText: string): string {
-  const pieces: string[] = [];
-  const btRegex = /\bBT\b([\s\S]*?)\bET\b/g;
-  let btMatch: RegExpExecArray | null;
-
-  while ((btMatch = btRegex.exec(streamText)) !== null) {
-    const block = btMatch[1] ?? '';
-    const blockParts: string[] = [];
-
-    // Handle TJ arrays and simple Tj / ' / " operators in order via token scan
-    const tokenRegex = /\[((?:[^[\]]|\([^)]*\))*)\]\s*TJ|\(((?:\\.|[^\\)])*)\)\s*(?:Tj|'|")/g;
-    let tok: RegExpExecArray | null;
-    while ((tok = tokenRegex.exec(block)) !== null) {
-      if (tok[1] !== undefined) {
-        const inner = tok[1];
-        const strRegex = /\(((?:\\.|[^\\)])*)\)/g;
-        let s: RegExpExecArray | null;
-        const arrText: string[] = [];
-        while ((s = strRegex.exec(inner)) !== null) {
-          if (s[1] !== undefined) arrText.push(unescapePdfLiteral(s[1]));
-        }
-        if (arrText.length) blockParts.push(arrText.join(''));
-      } else if (tok[2] !== undefined) {
-        blockParts.push(unescapePdfLiteral(tok[2]));
-      }
-    }
-
-    if (blockParts.length > 0) {
-      pieces.push(blockParts.join(''));
-    }
-  }
-
-  return pieces.join('\n');
+interface WorkerResponse {
+  ok: boolean;
+  result?: ExtractedDocument;
+  error?: string;
 }
 
-/**
- * Pure-TypeScript PDF text extractor supporting uncompressed and `FlateDecode`
- * content streams. Designed for text-based PDFs without native/canvas dependencies.
- */
-export function extractTextFromPdfBuffer(buf: Buffer): string {
-  const header = buf.subarray(0, 8).toString('latin1');
-  if (!header.startsWith('%PDF-')) {
-    throw new Error('Invalid PDF file: missing %PDF- header');
+/** Most parser workers allowed to run at once, process-wide. */
+export const MAX_PARALLEL_PARSES = Math.max(1, Math.min(4, availableParallelism() - 1));
+/** Most parse requests allowed to wait for a free worker before new ones are refused. */
+export const MAX_QUEUED_PARSES = 16;
+/** Heap limits for each parser worker, so one hostile document cannot exhaust process memory. */
+export const PARSE_WORKER_RESOURCE_LIMITS = {
+  maxOldGenerationSizeMb: 256,
+  maxYoungGenerationSizeMb: 32,
+  stackSizeMb: 4,
+} as const;
+
+/** Thrown when every parser worker is busy and the wait queue is full. */
+export class DocumentParserBusyError extends Error {
+  constructor() {
+    super('The document parser is busy; please retry shortly');
+    this.name = 'DocumentParserBusyError';
   }
+}
 
-  const rawLatin = buf.toString('latin1');
-  const extractedChunks: string[] = [];
-  const streamRegex = /<<([\s\S]*?)>>\s*stream\r?\n([\s\S]*?)\r?\n?endstream/g;
-  let match: RegExpExecArray | null;
+let activeParses = 0;
+const parseQueue: (() => void)[] = [];
 
-  while ((match = streamRegex.exec(rawLatin)) !== null) {
-    const dict = match[1] ?? '';
-    const streamBody = match[2] ?? '';
-    const isFlate = /\/Filter\s*(?:\[[^\]]*\/FlateDecode|\/FlateDecode)\b/.test(dict);
-
-    let decoded: string;
-    if (isFlate) {
-      try {
-        const rawBytes = Buffer.from(streamBody, 'latin1');
-        decoded = inflateSync(rawBytes).toString('latin1');
-      } catch {
-        continue;
-      }
+function acquireParseSlot(): Promise<() => void> {
+  let released = false;
+  const release = () => {
+    if (released) return;
+    released = true;
+    const next = parseQueue.shift();
+    if (next) {
+      next(); // hand the slot straight to the next waiter
     } else {
-      decoded = streamBody;
+      activeParses -= 1;
     }
-
-    if (decoded.includes('BT') && decoded.includes('ET')) {
-      const text = extractTextFromPdfStreamText(decoded);
-      if (text.trim()) extractedChunks.push(text);
-    }
+  };
+  if (activeParses < MAX_PARALLEL_PARSES) {
+    activeParses += 1;
+    return Promise.resolve(release);
   }
-
-  // Fallback: check uncompressed top-level BT..ET blocks if no streams matched
-  if (extractedChunks.length === 0 && rawLatin.includes('BT')) {
-    const fallback = extractTextFromPdfStreamText(rawLatin);
-    if (fallback.trim()) extractedChunks.push(fallback);
+  if (parseQueue.length >= MAX_QUEUED_PARSES) {
+    return Promise.reject(new DocumentParserBusyError());
   }
-
-  return extractedChunks
-    .join('\n\n')
-    .replace(/[ \t]+\n/g, '\n')
-    .replace(/\n{3,}/g, '\n\n')
-    .trim();
+  return new Promise((resolve) => {
+    parseQueue.push(() => {
+      resolve(release);
+    });
+  });
 }
 
-export function detectDocumentFormat(
-  filename = '',
-  mimeType = '',
-  buffer?: Buffer,
-): ExtractedDocument['format'] {
-  const lowerName = filename.toLowerCase();
-  const lowerMime = mimeType.toLowerCase();
+export async function parseDocumentInWorker(
+  workerUrl: URL,
+  buffer: Buffer,
+  options?: { filename?: string; mimeType?: string; timeoutMs?: number },
+): Promise<ExtractedDocument> {
+  const release = await acquireParseSlot();
+  try {
+    return await runParserWorker(workerUrl, buffer, options);
+  } finally {
+    release();
+  }
+}
 
-  if (lowerName.endsWith('.pdf') || lowerMime === 'application/pdf') return 'pdf';
-  if (
-    lowerName.endsWith('.docx') ||
-    lowerMime === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
-  ) {
-    return 'docx';
-  }
-  if (lowerName.endsWith('.html') || lowerName.endsWith('.htm') || lowerMime.includes('text/html')) {
-    return 'html';
-  }
-  if (lowerName.endsWith('.md') || lowerName.endsWith('.markdown') || lowerMime.includes('markdown')) {
-    return 'md';
-  }
+function runParserWorker(
+  workerUrl: URL,
+  buffer: Buffer,
+  options?: { filename?: string; mimeType?: string; timeoutMs?: number },
+): Promise<ExtractedDocument> {
+  const timeoutMs = options?.timeoutMs ?? PARSE_TIMEOUT_MS;
+  return new Promise((resolve, reject) => {
+    const worker = new Worker(workerUrl, { resourceLimits: PARSE_WORKER_RESOURCE_LIMITS });
+    let settled = false;
 
-  if (buffer) {
-    if (buffer.subarray(0, 5).toString('latin1') === '%PDF-') return 'pdf';
-    if (buffer.length >= 4 && buffer.readUInt32LE(0) === 0x04034b50) return 'docx';
-    const head = buffer.subarray(0, 512).toString('utf8').trimStart().toLowerCase();
-    if (head.startsWith('<!doctype html') || head.startsWith('<html')) return 'html';
-  }
+    // Settle only once the worker has fully stopped, so the slot is not
+    // handed on while the old worker still holds its memory.
+    const finish = (outcome: () => void) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      void worker
+        .terminate()
+        .catch(() => undefined)
+        .finally(outcome);
+    };
 
-  return 'txt';
+    const timer = setTimeout(() => {
+      finish(() => {
+        reject(new Error(`Document parsing timed out after ${String(timeoutMs)}ms`));
+      });
+    }, timeoutMs);
+
+    worker.once('message', (msg: WorkerResponse) => {
+      finish(() => {
+        if (msg.ok && msg.result) {
+          resolve(msg.result);
+        } else {
+          reject(new Error(msg.error ?? 'Document parsing failed in worker'));
+        }
+      });
+    });
+
+    worker.once('error', (err) => {
+      const outOfMemory = (err as NodeJS.ErrnoException).code === 'ERR_WORKER_OUT_OF_MEMORY';
+      finish(() => {
+        reject(outOfMemory ? new Error('Document is too complex to parse') : err);
+      });
+    });
+
+    worker.once('exit', (code) => {
+      finish(() => {
+        reject(new Error(`Document parser worker exited unexpectedly (${String(code)})`));
+      });
+    });
+
+    // Pass a copy so transferring won't detach caller's Buffer.
+    const copy = new Uint8Array(buffer.length);
+    copy.set(buffer);
+    worker.postMessage({ buffer: copy, filename: options?.filename, mimeType: options?.mimeType }, [
+      copy.buffer,
+    ]);
+  });
 }
 
 /**
  * Extracts normalized plain text from an uploaded document buffer (PDF, DOCX, HTML, MD, TXT).
+ * PDF, DOCX, and HTML buffers execute inside an isolated worker thread with a timeout.
  */
-export function extractTextFromBuffer(
+export async function extractTextFromBuffer(
   buffer: Buffer,
-  options?: { filename?: string; mimeType?: string },
-): ExtractedDocument {
+  options?: {
+    filename?: string;
+    mimeType?: string;
+    timeoutMs?: number;
+    useWorker?: boolean;
+    workerUrl?: URL;
+  },
+): Promise<ExtractedDocument> {
   if (buffer.length > MAX_DOC_BYTES) {
     throw new Error(`Document exceeds maximum size (${String(MAX_DOC_BYTES / (1024 * 1024))} MB)`);
   }
   const format = detectDocumentFormat(options?.filename, options?.mimeType, buffer);
 
-  switch (format) {
-    case 'docx':
-      return { format, text: extractTextFromDocxBuffer(buffer) };
-    case 'pdf': {
-      const text = extractTextFromPdfBuffer(buffer);
-      if (!text) {
-        throw new Error(
-          'No extractable text was found in this PDF (scanned/image-only PDFs are not supported without OCR).',
-        );
-      }
-      return { format, text };
+  if (
+    (format === 'pdf' || format === 'docx' || format === 'html') &&
+    options?.useWorker !== false
+  ) {
+    const workerUrl = options?.workerUrl ?? resolveWorkerUrl();
+    if (workerUrl) {
+      return parseDocumentInWorker(workerUrl, buffer, options);
     }
-    case 'html': {
-      const html = buffer.toString('utf8');
-      const titleMatch = /<title[^>]*>([\s\S]*?)<\/title>/i.exec(html);
-      return {
-        format,
-        title: titleMatch?.[1]?.replace(/\s+/g, ' ').trim() || undefined,
-        text: parseHtmlToText(html),
-      };
-    }
-    case 'md':
-    case 'txt':
-      return { format, text: buffer.toString('utf8').replace(/\r\n/g, '\n').trim() };
   }
-}
 
-function isPrivateIp(ip: string): boolean {
-  if (net.isIPv4(ip)) {
-    const parts = ip.split('.').map(Number);
-    const a = parts[0] ?? 0;
-    const b = parts[1] ?? 0;
-    if (a === 10 || a === 127 || a === 0) return true;
-    if (a === 169 && b === 254) return true;
-    if (a === 172 && b >= 16 && b <= 31) return true;
-    if (a === 192 && b === 168) return true;
-    if (a === 100 && b >= 64 && b <= 127) return true;
-    return false;
-  }
-  if (net.isIPv6(ip)) {
-    const lower = ip.toLowerCase();
-    return (
-      lower === '::1' ||
-      lower === '::' ||
-      lower.startsWith('fc') ||
-      lower.startsWith('fd') ||
-      lower.startsWith('fe80:') ||
-      lower.startsWith('::ffff:127.') ||
-      lower.startsWith('::ffff:10.') ||
-      lower.startsWith('::ffff:192.168.')
-    );
-  }
-  return true;
+  return parseDocumentBufferDirect(buffer, options);
 }
 
 /**
- * Fetches an external HTTP(S) document with SSRF protection (blocks loopback,
- * link-local, and RFC1918 private addresses; disables redirects).
+ * Fetches an external HTTP(S) document with SSRF protection:
+ * - Blocks localhost, `.local`/`.internal` hostnames, and all non-unicast IPs (incl. IPv4-mapped IPv6 & NAT64)
+ * - Uses an `undici` dispatcher with custom DNS-pinning `connect.lookup` to prevent DNS rebinding
+ * - Disables redirects and streams response bodies with a strict byte cap
  */
 export async function fetchDocumentFromUrl(
   rawUrl: string,
-  options?: { fetch?: typeof fetch; maxBytes?: number; timeoutMs?: number; skipDnsCheck?: boolean },
+  options?: {
+    fetch?: typeof fetch;
+    lookup?: DnsLookupFn;
+    maxBytes?: number;
+    timeoutMs?: number;
+    skipDnsCheck?: boolean;
+  },
 ): Promise<ExtractedDocument> {
   let parsed: URL;
   try {
@@ -301,45 +357,76 @@ export async function fetchDocumentFromUrl(
     throw new Error('Credentials in URLs are not allowed');
   }
 
-  const hostname = parsed.hostname.toLowerCase();
-  if (hostname === 'localhost' || hostname.endsWith('.local') || hostname.endsWith('.internal')) {
+  const rawHost = parsed.hostname.toLowerCase();
+  const hostNoBrackets =
+    rawHost.startsWith('[') && rawHost.endsWith(']') ? rawHost.slice(1, -1) : rawHost;
+  if (
+    hostNoBrackets === 'localhost' ||
+    hostNoBrackets.endsWith('.local') ||
+    hostNoBrackets.endsWith('.internal')
+  ) {
     throw new Error('Localhost and internal URLs are not allowed');
   }
 
-  if (net.isIP(hostname)) {
-    if (isPrivateIp(hostname)) throw new Error('Private network IP addresses are not allowed');
-  } else if (!options?.skipDnsCheck) {
-    const resolved = await lookup(hostname, { all: true }).catch(() => []);
+  if (net.isIP(hostNoBrackets) || ipaddr.isValid(hostNoBrackets)) {
+    if (isPrivateIp(hostNoBrackets)) {
+      throw new Error('Private network IP addresses are not allowed');
+    }
+  } else if (options?.fetch && !options.skipDnsCheck) {
+    const resolved = await lookupPromises(hostNoBrackets, { all: true }).catch(() => []);
     if (resolved.length === 0 || resolved.some((r) => isPrivateIp(r.address))) {
       throw new Error('URL resolves to a disallowed or unresolvable address');
     }
   }
 
-  const fetchFn = options?.fetch ?? fetch;
   const maxBytes = options?.maxBytes ?? 2 * 1024 * 1024;
   const timeoutMs = options?.timeoutMs ?? 15_000;
+  const requestHeaders = {
+    accept: 'text/html,text/plain,text/markdown,application/pdf,*/*;q=0.5',
+  };
 
-  const res = await fetchFn(parsed.toString(), {
-    redirect: 'manual',
-    signal: AbortSignal.timeout(timeoutMs),
-    headers: { accept: 'text/html,text/plain,text/markdown,application/pdf,*/*;q=0.5' },
-  });
+  let res: Response;
+  let agent: Agent | null = null;
+  try {
+    if (options?.fetch) {
+      res = await options.fetch(parsed.toString(), {
+        redirect: 'manual',
+        signal: AbortSignal.timeout(timeoutMs),
+        headers: requestHeaders,
+      });
+    } else {
+      const safeLookup = createSsrfSafeLookup(options?.lookup);
+      agent = new Agent({
+        connect: { lookup: options?.skipDnsCheck ? undefined : safeLookup },
+        maxResponseSize: maxBytes,
+      });
+      const undiciRes = await undiciFetch(parsed.toString(), {
+        dispatcher: agent,
+        redirect: 'manual',
+        signal: AbortSignal.timeout(timeoutMs),
+        headers: requestHeaders,
+      });
+      res = undiciRes as unknown as Response;
+    }
 
-  if (res.status >= 300 && res.status < 400) {
-    throw new Error('Redirects are not followed when fetching remote documents');
+    if (res.status >= 300 && res.status < 400) {
+      await res.body?.cancel().catch(() => undefined);
+      throw new Error('Redirects are not followed when fetching remote documents');
+    }
+    if (!res.ok) {
+      await res.body?.cancel().catch(() => undefined);
+      throw new Error(`Failed to fetch URL: HTTP ${String(res.status)}`);
+    }
+
+    const buf = await readResponseBytesWithLimit(res, maxBytes);
+    const contentType = res.headers.get('content-type') ?? '';
+    return await extractTextFromBuffer(buf, {
+      filename: parsed.pathname,
+      mimeType: contentType.split(';')[0]?.trim(),
+    });
+  } finally {
+    if (agent) {
+      await agent.close().catch(() => undefined);
+    }
   }
-  if (!res.ok) {
-    throw new Error(`Failed to fetch URL: HTTP ${String(res.status)}`);
-  }
-
-  const arrBuf = await res.arrayBuffer();
-  if (arrBuf.byteLength > maxBytes) {
-    throw new Error(`Remote document exceeds maximum size (${String(maxBytes)} bytes)`);
-  }
-
-  const contentType = res.headers.get('content-type') ?? '';
-  return extractTextFromBuffer(Buffer.from(arrBuf), {
-    filename: parsed.pathname,
-    mimeType: contentType.split(';')[0]?.trim(),
-  });
 }

@@ -7,8 +7,11 @@ import { buildApp } from './app.js';
 async function main(): Promise<void> {
   const config = loadConfig();
   const database = await openDatabase(config);
-  await database.migrate();
+  const dataMigrations = await database.migrate();
   const app = await buildApp({ config, database });
+  for (const m of dataMigrations) {
+    app.log.info({ migration: m.name, ...m.details }, 'data migration applied');
+  }
 
   const shutdown = async (signal: string) => {
     app.log.info({ signal }, 'shutting down');

@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useEffect, useState } from 'react';
 import * as Popover from '@radix-ui/react-popover';
 import {
   CircleAlert,
@@ -28,7 +28,17 @@ export function StatusBar({
 }) {
   const issues = useIssues();
   const doc = useEditor((s) => s.doc);
-  const conflictCount = useMemo(() => detectDeterministicConflicts(doc).length, [doc]);
+  const [conflictCount, setConflictCount] = useState(
+    () => detectDeterministicConflicts(doc).length,
+  );
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setConflictCount(detectDeterministicConflicts(doc).length);
+    }, 300);
+    return () => {
+      clearTimeout(timer);
+    };
+  }, [doc]);
   const online = useOnline();
   const errors = issues.filter((i) => i.severity === 'error');
   const warnings = issues.filter((i) => i.severity === 'warning');
@@ -110,11 +120,7 @@ export function StatusBar({
       <CloudStatus />
 
       {onOpenConflicts && (
-        <button
-          type="button"
-          className="btn-ghost px-2 py-0.5 text-xs"
-          onClick={onOpenConflicts}
-        >
+        <button type="button" className="btn-ghost px-2 py-0.5 text-xs" onClick={onOpenConflicts}>
           <GitCompareArrows
             size={13}
             className={conflictCount > 0 ? 'text-amber-700' : 'text-slate-600'}

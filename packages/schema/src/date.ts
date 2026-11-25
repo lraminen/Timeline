@@ -1,5 +1,64 @@
 import { z } from 'zod';
 
+/** Days in a month (1–12), using the proleptic Gregorian calendar. */
+export function daysInMonth(year: number, month: number, bce = false): number {
+  const astronomical = bce ? 1 - year : year;
+  const isLeap = (astronomical % 4 === 0 && astronomical % 100 !== 0) || astronomical % 400 === 0;
+  return [31, isLeap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][month - 1] ?? 31;
+}
+
+const PARTIAL_DATE = /^(-?)(\d{1,6})(?:-(\d{2})(?:-(\d{2}))?)?$/;
+const FULL_ISO_DATETIME =
+  /^(-?)(\d{1,6})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2})(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})?$/;
+
+/**
+ * Validates that a timeline date string uses a supported format (`YYYY`, `YYYY-MM`,
+ * `YYYY-MM-DD`, or full ISO-8601 datetime) and represents a valid Gregorian calendar date.
+ */
+export function isValidTimelineDateString(raw: string): boolean {
+  const trimmed = raw.trim();
+  if (!trimmed) return false;
+
+  const partial = PARTIAL_DATE.exec(trimmed);
+  if (partial) {
+    const bce = partial[1] === '-';
+    const year = Number(partial[2]);
+    const monthStr = partial[3] as string | undefined;
+    const dayStr = partial[4] as string | undefined;
+    if (!Number.isInteger(year) || year < 1 || year > 999_999) return false;
+    if (monthStr) {
+      const month = Number(monthStr);
+      if (month < 1 || month > 12) return false;
+      if (dayStr) {
+        const day = Number(dayStr);
+        if (day < 1 || day > daysInMonth(year, month, bce)) return false;
+      }
+    }
+    return true;
+  }
+
+  const dt = FULL_ISO_DATETIME.exec(trimmed);
+  if (dt) {
+    const bce = dt[1] === '-';
+    const year = Number(dt[2]);
+    const month = Number(dt[3]);
+    const day = Number(dt[4]);
+    const hour = Number(dt[5]);
+    const minute = Number(dt[6]);
+    const secondStr = dt[7] as string | undefined;
+    const second = secondStr ? Number(secondStr) : 0;
+    if (!Number.isInteger(year) || year < 1 || year > 999_999) return false;
+    if (month < 1 || month > 12) return false;
+    if (day < 1 || day > daysInMonth(year, month, bce)) return false;
+    if (hour < 0 || hour > 23 || minute < 0 || minute > 59 || second < 0 || second > 59) {
+      return false;
+    }
+    return true;
+  }
+
+  return false;
+}
+
 /**
  * Schema for timeline dates supporting partial ISO formats and BCE dates.
  */
@@ -32,6 +91,22 @@ export const TimelineDateSchema = z
       .describe(
         'Optional human-readable label to show instead of the parsed date, e.g. "The Renaissance" or "circa 1500".',
       ),
+  })
+  .superRefine((date, ctx) => {
+    if (!isValidTimelineDateString(date.start)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['start'],
+        message: 'Invalid calendar date string',
+      });
+    }
+    if (date.end !== undefined && !isValidTimelineDateString(date.end)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['end'],
+        message: 'Invalid calendar end date string',
+      });
+    }
   })
   .describe('A date or date range on the timeline, with optional modifiers.');
 

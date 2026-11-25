@@ -1,9 +1,19 @@
 import { useState } from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
-import { Check, CircleAlert, FileText, Quote, Sparkles, Upload } from 'lucide-react';
+import {
+  AlertTriangle,
+  Check,
+  CircleAlert,
+  FileText,
+  MapPin,
+  Quote,
+  Sparkles,
+  Upload,
+} from 'lucide-react';
 import type { ExtractedEventSuggestion, ExtractionResult } from '@chronicle/ai';
-import type { TimelineEvent } from '@chronicle/schema';
+import { compareDates, type TimelineEvent } from '@chronicle/schema';
 import { useCloud } from '../../cloud/cloud-store.js';
+import { dateProblem } from '../../lib/dates.js';
 import { newId } from '../../lib/ids.js';
 import { appendEvents, replaceDocument } from '../../store/commands.js';
 import { useEditor } from '../../store/editor-store.js';
@@ -13,10 +23,36 @@ import { ImportMode, type Mode } from './ImportMode.js';
 interface ReviewCandidate {
   suggestion: ExtractedEventSuggestion;
   approved: boolean;
+  includeLocation: boolean;
   title: string;
   start: string;
   end: string;
   body: string;
+}
+
+function validateCandidate(c: ReviewCandidate): {
+  titleError: string | null;
+  startError: string | null;
+  endError: string | null;
+  hasError: boolean;
+} {
+  const titleError = c.title.trim() ? null : 'Title is required';
+  const startError = dateProblem(c.start);
+  let endError: string | null = null;
+  if (c.end.trim()) {
+    endError = dateProblem(c.end);
+    if (!endError && !startError) {
+      if (compareDates({ start: c.end.trim() }, { start: c.start.trim() }) < 0) {
+        endError = 'End date must be on or after start date';
+      }
+    }
+  }
+  return {
+    titleError,
+    startError,
+    endError,
+    hasError: Boolean(titleError || startError || endError),
+  };
 }
 
 function confidenceBadge(score: number): { label: string; className: string } {
@@ -53,8 +89,8 @@ function HighlightedCitation({
   }
   if (start === undefined || end === undefined) {
     return (
-      <p className="mt-1 rounded bg-slate-100 p-2 text-xs text-slate-700">
-        Exact quote span not located in pasted text preview.
+      <p className="mt-1 rounded bg-amber-50 p-2 text-xs text-amber-900">
+        Quote could not be matched verbatim inside the extracted source text.
       </p>
     );
   }
@@ -90,11 +126,11 @@ export function AiExtractImport({ onDone }: { onDone: (message: string) => void 
   const [mode, setMode] = useState<Mode>('append');
 
   const canExtract = Boolean(
-    api?.aiExtractText &&
-      user &&
-      ((sourceKind === 'text' && text.trim()) ||
-        (sourceKind === 'url' && url.trim()) ||
-        (sourceKind === 'file' && file)),
+    api &&
+    user &&
+    ((sourceKind === 'text' && api.aiExtractText && text.trim()) ||
+      (sourceKind === 'url' && api.aiExtractText && url.trim()) ||
+      (sourceKind === 'file' && api.aiExtractFile && file)),
   );
 
   const runExtraction = async () => {
@@ -117,7 +153,8 @@ export function AiExtractImport({ onDone }: { onDone: (message: string) => void 
       setCandidates(
         res.events.map((s) => ({
           suggestion: s,
-          approved: s.confidence >= 0.5,
+          approved: false,
+          includeLocation: false,
           title: s.title,
           start: s.date.start,
           end: s.date.end ?? '',
@@ -131,11 +168,14 @@ export function AiExtractImport({ onDone }: { onDone: (message: string) => void 
     }
   };
 
-  const applyApproved = () => {
-    const approved = candidates.filter((c) => c.approved && c.title.trim() && c.start.trim());
-    if (approved.length === 0) return;
+  const approvedCandidates = candidates.filter((c) => c.approved);
+  const approvedWithErrors = approvedCandidates.filter((c) => validateCandidate(c).hasError);
+  const canApply = approvedCandidates.length > 0 && approvedWithErrors.length === 0;
 
-    const events: TimelineEvent[] = approved.map((c) => ({
+  const applyApproved = () => {
+    if (!canApply) return;
+
+    const events: TimelineEvent[] = approvedCandidates.map((c) => ({
       id: newId(),
       title: c.title.trim(),
       date: {
@@ -150,7 +190,8 @@ export function AiExtractImport({ onDone }: { onDone: (message: string) => void 
       ...(c.body.trim() ? { body: c.body.trim() } : {}),
       media: [],
       tags: c.suggestion.tags,
-      ...(c.suggestion.location ? { location: c.suggestion.location } : {}),
+      ...(c.includeLocation && c.suggestion.location ? { location: c.suggestion.location } : {}),
+      aiGenerated: true,
     }));
 
     const { doc, execute } = useEditor.getState();
@@ -314,7 +355,8 @@ export function AiExtractImport({ onDone }: { onDone: (message: string) => void 
     );
   }
 
-  const approvedCount = candidates.filter((c) => c.approved).length;
+  const effectiveSourceText = result.sourceText ?? (sourceKind === 'text' ? text.trim() : '');
+  const approvedCount = approvedCandidates.length;
 
   return (
     <div className="space-y-4">
@@ -327,6 +369,9 @@ export function AiExtractImport({ onDone }: { onDone: (message: string) => void 
             {result.processedChunks}/{result.totalChunks} chunk
             {result.totalChunks === 1 ? '' : 's'}
             {result.truncated ? ' (document truncated to batch limit)' : ''}
+            {result.droppedEvents
+              ? ` · ${String(result.droppedEvents)} invalid candidate${result.droppedEvents === 1 ? '' : 's'} skipped`
+              : ''}
           </span>
         </div>
         <button
@@ -342,9 +387,7 @@ export function AiExtractImport({ onDone }: { onDone: (message: string) => void 
       </div>
 
       {candidates.length === 0 ? (
-        <p className="text-sm text-slate-600">
-          No dated events were found in this document.
-        </p>
+        <p className="text-sm text-slate-600">No dated events were found in this document.</p>
       ) : (
         <>
           <div className="flex items-center justify-between text-xs">
@@ -377,11 +420,16 @@ export function AiExtractImport({ onDone }: { onDone: (message: string) => void 
             {candidates.map((c, idx) => {
               const badge = confidenceBadge(c.suggestion.confidence);
               const quoteExpanded = expandedQuoteId === c.suggestion.id;
+              const unverifiedCitation = c.suggestion.citation.startOffset === undefined;
+              const validation = validateCandidate(c);
+
               return (
                 <li
                   key={c.suggestion.id}
                   className={`space-y-2 rounded-md border p-3 ${
-                    c.approved ? 'border-blue-300 bg-white' : 'border-slate-200 bg-slate-50 opacity-75'
+                    c.approved
+                      ? 'border-blue-300 bg-white'
+                      : 'border-slate-200 bg-slate-50 opacity-85'
                   }`}
                 >
                   <div className="flex flex-wrap items-center gap-2">
@@ -392,7 +440,9 @@ export function AiExtractImport({ onDone }: { onDone: (message: string) => void 
                         onChange={(e) => {
                           const checked = e.target.checked;
                           setCandidates((prev) =>
-                            prev.map((item, i) => (i === idx ? { ...item, approved: checked } : item)),
+                            prev.map((item, i) =>
+                              i === idx ? { ...item, approved: checked } : item,
+                            ),
                           );
                         }}
                       />
@@ -401,15 +451,24 @@ export function AiExtractImport({ onDone }: { onDone: (message: string) => void 
                     <span className="rounded bg-purple-100 px-1.5 py-0.5 text-[11px] font-medium text-purple-800">
                       AI-suggested
                     </span>
-                    <span className={`rounded px-1.5 py-0.5 text-[11px] font-medium ${badge.className}`}>
+                    <span
+                      className={`rounded px-1.5 py-0.5 text-[11px] font-medium ${badge.className}`}
+                    >
                       {badge.label}
                     </span>
+                    {unverifiedCitation && (
+                      <span className="inline-flex items-center gap-1 rounded bg-amber-100 px-1.5 py-0.5 text-[11px] font-medium text-amber-900">
+                        <AlertTriangle size={11} aria-hidden />
+                        Citation quote not matched verbatim in source
+                      </span>
+                    )}
                   </div>
 
                   <div className="grid gap-2 sm:grid-cols-[1fr_9rem_9rem]">
                     <input
                       aria-label={`Event ${String(idx + 1)} title`}
                       className="input text-sm font-medium"
+                      aria-invalid={validation.titleError ? true : undefined}
                       value={c.title}
                       onChange={(e) => {
                         const val = e.target.value;
@@ -421,6 +480,7 @@ export function AiExtractImport({ onDone }: { onDone: (message: string) => void 
                     <input
                       aria-label={`Event ${String(idx + 1)} start date`}
                       className="input font-mono text-xs"
+                      aria-invalid={validation.startError ? true : undefined}
                       value={c.start}
                       placeholder="YYYY-MM-DD"
                       onChange={(e) => {
@@ -433,6 +493,7 @@ export function AiExtractImport({ onDone }: { onDone: (message: string) => void 
                     <input
                       aria-label={`Event ${String(idx + 1)} end date`}
                       className="input font-mono text-xs"
+                      aria-invalid={validation.endError ? true : undefined}
                       value={c.end}
                       placeholder="End (optional)"
                       onChange={(e) => {
@@ -443,6 +504,14 @@ export function AiExtractImport({ onDone }: { onDone: (message: string) => void 
                       }}
                     />
                   </div>
+
+                  {validation.hasError && (
+                    <p role="alert" className="text-xs text-red-700">
+                      {[validation.titleError, validation.startError, validation.endError]
+                        .filter(Boolean)
+                        .join(' · ')}
+                    </p>
+                  )}
 
                   <textarea
                     aria-label={`Event ${String(idx + 1)} description`}
@@ -457,13 +526,37 @@ export function AiExtractImport({ onDone }: { onDone: (message: string) => void 
                     }}
                   />
 
+                  {c.suggestion.location && (
+                    <label className="flex items-center gap-1.5 rounded bg-slate-100 px-2 py-1 text-xs text-slate-800">
+                      <input
+                        type="checkbox"
+                        checked={c.includeLocation}
+                        onChange={(e) => {
+                          const checked = e.target.checked;
+                          setCandidates((prev) =>
+                            prev.map((item, i) =>
+                              i === idx ? { ...item, includeLocation: checked } : item,
+                            ),
+                          );
+                        }}
+                      />
+                      <MapPin size={12} className="shrink-0 text-slate-600" aria-hidden />
+                      <span>
+                        Include suggested location:{' '}
+                        <strong>{c.suggestion.location.label ?? 'Coordinates'}</strong> (
+                        {c.suggestion.location.lat.toFixed(4)},{' '}
+                        {c.suggestion.location.lng.toFixed(4)})
+                      </span>
+                    </label>
+                  )}
+
                   <div className="rounded bg-slate-50 px-2.5 py-1.5 text-xs text-slate-700">
                     <div className="flex items-start justify-between gap-2">
                       <span className="flex items-start gap-1.5">
                         <Quote size={13} className="mt-0.5 shrink-0 text-slate-500" aria-hidden />
                         <span className="italic">“{c.suggestion.citation.quote}”</span>
                       </span>
-                      {sourceKind === 'text' && text && (
+                      {effectiveSourceText && (
                         <button
                           type="button"
                           className="shrink-0 text-[11px] font-medium text-blue-700 underline"
@@ -478,7 +571,7 @@ export function AiExtractImport({ onDone }: { onDone: (message: string) => void 
                     </div>
                     {quoteExpanded && (
                       <HighlightedCitation
-                        sourceText={text}
+                        sourceText={effectiveSourceText}
                         quote={c.suggestion.citation.quote}
                         startOffset={c.suggestion.citation.startOffset}
                         endOffset={c.suggestion.citation.endOffset}
@@ -490,6 +583,12 @@ export function AiExtractImport({ onDone }: { onDone: (message: string) => void 
             })}
           </ul>
 
+          {approvedWithErrors.length > 0 && (
+            <p role="alert" className="text-xs text-red-700">
+              Fix invalid title or date errors on approved events before importing.
+            </p>
+          )}
+
           <ImportMode mode={mode} onChange={setMode} />
 
           <div className="flex justify-end gap-2">
@@ -497,7 +596,7 @@ export function AiExtractImport({ onDone }: { onDone: (message: string) => void 
             <button
               type="button"
               className="btn-primary"
-              disabled={approvedCount === 0}
+              disabled={!canApply}
               onClick={applyApproved}
             >
               <Check size={15} aria-hidden />

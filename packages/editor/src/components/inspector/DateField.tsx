@@ -87,8 +87,8 @@ export function DateField({
 
   return (
     <fieldset aria-describedby={shownError ? `${id}-err` : `${id}-preview`}>
-      <div className="mb-1 flex items-center justify-between gap-2">
-        <legend className="label mb-0">{legend}</legend>
+      <legend className="label mb-1">{legend}</legend>
+      <div className="mb-1 flex justify-end">
         <button
           type="button"
           className="btn-ghost px-1.5 py-0.5 text-[11px]"

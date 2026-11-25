@@ -37,15 +37,9 @@ export {
   type MockHandler,
 } from './providers.js';
 
-export {
-  normalizeNaturalDateDeterministic,
-  normalizeNaturalDate,
-} from './date-normalizer.js';
+export { normalizeNaturalDateDeterministic, normalizeNaturalDate } from './date-normalizer.js';
 
-export {
-  detectDeterministicConflicts,
-  detectTimelineConflicts,
-} from './conflicts.js';
+export { detectDeterministicConflicts, detectTimelineConflicts } from './conflicts.js';
 
 export {
   chunkDocument,

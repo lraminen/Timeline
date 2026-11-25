@@ -1,4 +1,4 @@
-import { useId, useState } from 'react';
+import { useId, useRef, useState } from 'react';
 import { ArrowUpToLine, ImagePlus, Link as LinkIcon, Sparkles, Trash2, Upload } from 'lucide-react';
 import { getOEmbedUrl } from '@chronicle/core';
 import { isSafeMediaUrl, type TimelineMedia } from '@chronicle/schema';
@@ -58,9 +58,10 @@ function MediaItem({
   const user = useCloud((s) => s.user);
   const projectId = useEditor((s) => s.remote?.projectId);
   const [altBusy, setAltBusy] = useState(false);
-  const [altSuggestion, setAltSuggestion] = useState<{ altText: string; confidence: number } | null>(
-    null,
-  );
+  const [altSuggestion, setAltSuggestion] = useState<{
+    altText: string;
+    confidence: number;
+  } | null>(null);
   const [altError, setAltError] = useState<string | null>(null);
 
   const suggestAlt = async () => {
@@ -159,7 +160,14 @@ function MediaItem({
       {media.type === 'image' && (
         <div className="space-y-1.5">
           <div className="flex items-center justify-between gap-2">
-            <span className="text-xs font-medium text-slate-700">Alt text</span>
+            <span className="inline-flex items-center gap-1.5 text-xs font-medium text-slate-700">
+              Alt text
+              {media.aiGenerated && (
+                <span className="rounded bg-purple-100 px-1.5 py-0.5 text-[10px] font-medium text-purple-800">
+                  AI-assisted
+                </span>
+              )}
+            </span>
             {api?.aiAltText && user && safe && (
               <button
                 type="button"
@@ -184,7 +192,7 @@ function MediaItem({
                 className="input"
                 value={media.alt ?? ''}
                 onChange={(e) => {
-                  onChange({ alt: e.target.value || undefined });
+                  onChange({ alt: e.target.value || undefined, aiGenerated: undefined });
                 }}
               />
             )}
@@ -217,7 +225,7 @@ function MediaItem({
                   type="button"
                   className="btn-primary px-2 py-0.5 text-xs"
                   onClick={() => {
-                    onChange({ alt: altSuggestion.altText });
+                    onChange({ alt: altSuggestion.altText, aiGenerated: true });
                     setAltSuggestion(null);
                   }}
                 >
@@ -258,6 +266,36 @@ function MediaItem({
   );
 }
 
+/**
+ * Stable React keys for media items, which have no ids. Keying by index let
+ * per-item state (such as a pending alt-text suggestion) jump to a different
+ * item after a removal or reorder. Keys follow items through this component's
+ * own edits; any other change to the list (undo, sync) gives every item a fresh
+ * key. Keys never include editable fields, so typing does not remount an item.
+ */
+function useMediaKeys(media: TimelineMedia[], onChange: (media: TimelineMedia[]) => void) {
+  const counter = useRef(0);
+  const known = useRef<{ keys: string[]; urls: string[] } | null>(null);
+  const fresh = () => `media-${String((counter.current += 1))}`;
+
+  const urls = media.map((m) => m.url);
+  const prev = known.current;
+  if (prev?.urls.length !== urls.length || prev.urls.some((u, i) => u !== urls[i])) {
+    known.current = { keys: urls.map(() => fresh()), urls };
+  }
+  const keys = known.current?.keys ?? [];
+
+  /** Emits a new media list together with the keys its items should keep. */
+  const commit = (next: TimelineMedia[], nextKeys: string[]) => {
+    known.current = { keys: nextKeys, urls: next.map((m) => m.url) };
+    onChange(next);
+  };
+  const append = (item: TimelineMedia) => {
+    commit([...media, item], [...keys, fresh()]);
+  };
+  return { keys, commit, append };
+}
+
 export function MediaManager({
   media,
   eventTitle,
@@ -270,6 +308,7 @@ export function MediaManager({
   const id = useId();
   const [url, setUrl] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const { keys, commit, append } = useMediaKeys(media, onChange);
 
   const addUrl = () => {
     const trimmed = url.trim();
@@ -279,7 +318,7 @@ export function MediaManager({
       setError('That URL scheme is not allowed. Use an http(s) link.');
       return;
     }
-    onChange([...media, { type, url: trimmed }]);
+    append({ type, url: trimmed });
     setUrl('');
     setError(null);
   };
@@ -303,14 +342,11 @@ export function MediaManager({
       setError(null);
       try {
         const uploaded = await serverUpload.api.uploadMedia(serverUpload.projectId, file);
-        onChange([
-          ...media,
-          {
-            type: uploaded.kind,
-            url: uploaded.url,
-            alt: uploaded.kind === 'image' ? '' : undefined,
-          },
-        ]);
+        append({
+          type: uploaded.kind,
+          url: uploaded.url,
+          alt: uploaded.kind === 'image' ? '' : undefined,
+        });
       } catch (err) {
         setError(`Upload failed: ${err instanceof Error ? err.message : String(err)}`);
       } finally {
@@ -325,7 +361,7 @@ export function MediaManager({
       return;
     }
     const dataUrl = await readAsDataUrl(file);
-    onChange([...media, { type, url: dataUrl, alt: type === 'image' ? '' : undefined }]);
+    append({ type, url: dataUrl, alt: type === 'image' ? '' : undefined });
     setError(null);
   };
 
@@ -335,22 +371,29 @@ export function MediaManager({
         <ul className="space-y-2">
           {media.map((m, i) => (
             <MediaItem
-              // Media items have no ids. The key must not include editable fields
-              // (e.g. the URL), or typing would remount the item and drop focus.
-              key={i}
+              key={keys[i] ?? i}
               media={m}
               index={i}
               eventTitle={eventTitle}
               onChange={(patch) => {
-                onChange(media.map((item, j) => (j === i ? { ...item, ...patch } : item)));
+                commit(
+                  media.map((item, j) => (j === i ? { ...item, ...patch } : item)),
+                  keys,
+                );
               }}
               onRemove={() => {
-                onChange(media.filter((_, j) => j !== i));
+                commit(
+                  media.filter((_, j) => j !== i),
+                  keys.filter((_, j) => j !== i),
+                );
               }}
               onMakePrimary={
                 i > 0
                   ? () => {
-                      onChange([m, ...media.filter((_, j) => j !== i)]);
+                      commit(
+                        [m, ...media.filter((_, j) => j !== i)],
+                        [keys[i] ?? '', ...keys.filter((_, j) => j !== i)],
+                      );
                     }
                   : undefined
               }

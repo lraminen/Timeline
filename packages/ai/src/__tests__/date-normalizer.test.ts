@@ -1,9 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import {
-  normalizeNaturalDate,
-  normalizeNaturalDateDeterministic,
-} from '../date-normalizer.js';
-import { MockAiProvider } from '../providers.js';
+import { normalizeNaturalDate, normalizeNaturalDateDeterministic } from '../date-normalizer.js';
+import { AiProviderError, MockAiProvider } from '../providers.js';
 
 describe('date-normalizer', () => {
   it('parses seasonal expressions like "the summer of \'69"', () => {
@@ -46,13 +43,42 @@ describe('date-normalizer', () => {
     expect(bce.date?.uncertain).toBe(true);
   });
 
+  it('preserves approximate flag for "around" and "about" qualifiers', () => {
+    const around = normalizeNaturalDateDeterministic('around 1969');
+    expect(around.date).toEqual({ start: '1969', approximate: true });
+
+    const about = normalizeNaturalDateDeterministic('about 1850');
+    expect(about.date).toEqual({ start: '1850', approximate: true });
+  });
+
+  it('rejects month-and-day without a year and invalid calendar dates', () => {
+    expect(normalizeNaturalDateDeterministic('May 5').date).toBeNull();
+    expect(normalizeNaturalDateDeterministic('July 4').date).toBeNull();
+    expect(normalizeNaturalDateDeterministic('1969-13-45').date).toBeNull();
+    expect(normalizeNaturalDateDeterministic('February 31, 1969').date).toBeNull();
+    expect(normalizeNaturalDateDeterministic('February 29, 2023').date).toBeNull();
+    expect(normalizeNaturalDateDeterministic('February 29, 2024').date?.start).toBe('2024-02-29');
+  });
+
+  it('treats a bare one- or two-digit number as ambiguous but accepts explicit forms', () => {
+    for (const ambiguous of ['20', '5', 'around 20']) {
+      const res = normalizeNaturalDateDeterministic(ambiguous);
+      expect(res.date).toBeNull();
+      expect(res.reasoning).toMatch(/ambiguous/);
+    }
+    expect(normalizeNaturalDateDeterministic('20 CE').date?.start).toBe('0020');
+    expect(normalizeNaturalDateDeterministic('0020').date?.start).toBe('0020');
+    expect(normalizeNaturalDateDeterministic('-44').date?.start).toBe('-0044');
+    expect(normalizeNaturalDateDeterministic('476').date?.start).toBe('0476');
+  });
+
   it('parses English month dates', () => {
     const res = normalizeNaturalDateDeterministic('July 20, 1969');
     expect(res.date?.start).toBe('1969-07-20');
     expect(res.confidence).toBeGreaterThan(0.9);
   });
 
-  it('falls back to LLM only when deterministic parsing cannot resolve', async () => {
+  it('falls back to LLM only when deterministic parsing cannot resolve and validates returned dates', async () => {
     const mock = new MockAiProvider(() => ({
       start: '1945-05-08',
       approximate: false,
@@ -71,5 +97,14 @@ describe('date-normalizer', () => {
     expect(aiHit.aiGenerated).toBe(true);
     expect(aiHit.date?.start).toBe('1945-05-08');
     expect(aiHit.date?.displayOverride).toBe('VE Day');
+
+    const invalidAi = new MockAiProvider(() => ({
+      start: '2023-02-29',
+      confidence: 0.9,
+      reasoning: 'Bad leap date',
+    }));
+    await expect(normalizeNaturalDate('some vague event', invalidAi)).rejects.toThrow(
+      AiProviderError,
+    );
   });
 });

@@ -8,6 +8,8 @@ describe('loadConfig', () => {
     expect(c.publicUrl).toBe('http://127.0.0.1:3000');
     expect(c.EMBED_ORIGINS).toEqual(['*']);
     expect(c.CORS_ORIGINS).toEqual([]);
+    expect(c.AI_ALLOW_URL_FETCH).toBe(false);
+    expect(c.AI_MAX_CONCURRENT_PER_USER).toBe(2);
   });
 
   it('refuses to start in production without a strong secret and public URL', () => {

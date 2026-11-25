@@ -72,4 +72,44 @@ describe('conflict detection', () => {
     );
     expect(result.conflicts.some((c) => c.kind === 'invalid_range' && !c.aiGenerated)).toBe(true);
   });
+
+  it('detects per-group overlapping ranges efficiently without O(n^2) blowup', () => {
+    const timeline: Timeline = {
+      schemaVersion: '1.0.0',
+      id: 'tl-group',
+      title: 'Group overlaps',
+      eras: [],
+      settings: { layout: 'vertical', theme: 'light', locale: 'en' },
+      events: [
+        {
+          id: 'g1',
+          title: 'Phase A',
+          date: { start: '2020-01-01', end: '2020-06-01' },
+          media: [],
+          tags: [],
+          group: 'track-1',
+        },
+        {
+          id: 'g2',
+          title: 'Phase B',
+          date: { start: '2020-05-01', end: '2020-09-01' },
+          media: [],
+          tags: [],
+          group: 'track-1',
+        },
+        {
+          id: 'g3',
+          title: 'Phase C',
+          date: { start: '2021-01-01', end: '2021-03-01' },
+          media: [],
+          tags: [],
+          group: 'track-1',
+        },
+      ],
+    };
+    const conflicts = detectDeterministicConflicts(timeline);
+    const overlaps = conflicts.filter((c) => c.kind === 'overlapping_events');
+    expect(overlaps).toHaveLength(1);
+    expect(overlaps[0]?.eventIds).toEqual(['g1', 'g2']);
+  });
 });

@@ -25,6 +25,10 @@ export const TimelineEventSchema = z
       .describe('Freeform tags for filtering and grouping events.'),
     era: z.string().optional().describe('ID of the era this event belongs to.'),
     group: z.string().optional().describe('Grouping key used to cluster events in the UI.'),
+    aiGenerated: z
+      .boolean()
+      .optional()
+      .describe('Whether content on this event was generated or assisted by AI.'),
   })
   .describe('A single event on a Chronicle timeline.');
 

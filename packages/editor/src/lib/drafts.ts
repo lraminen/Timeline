@@ -1,5 +1,5 @@
 import { openDB, type DBSchema, type IDBPDatabase } from 'idb';
-import { validateTimeline, type Timeline } from '@chronicle/schema';
+import { repairTimelineDates, validateTimeline, type Timeline } from '@chronicle/schema';
 import type { RemoteLink } from '../store/editor-store.js';
 
 /**
@@ -51,13 +51,17 @@ export async function saveDraft(
 /**
  * Loads a draft. Stored documents are re-validated: data in IndexedDB is not
  * trusted blindly (it may predate a schema change, or have been edited).
+ * Date forms written by older releases are migrated first. The migration is
+ * deterministic and the server applies the same one, so a synced draft is not
+ * marked as changed by it.
  */
 export async function loadDraft(id: string): Promise<Draft | null> {
   const draft = await (await db()).get('drafts', id);
   if (!draft) return null;
-  const result = validateTimeline(draft.doc);
+  const migrated = repairTimelineDates(draft.doc).timeline;
+  const result = validateTimeline(migrated);
   // Keep editing possible even if invalid; the issues panel will explain.
-  return result.success ? { ...draft, doc: result.data } : draft;
+  return { ...draft, doc: result.success ? result.data : migrated };
 }
 
 export async function listDrafts(): Promise<DraftSummary[]> {

@@ -1,7 +1,14 @@
 // @chronicle/schema — public API surface
 // Re-export everything from each sub-module.
 
-export { TimelineDateSchema, parseTimelineDate, compareDates, type TimelineDate } from './date.js';
+export {
+  TimelineDateSchema,
+  daysInMonth,
+  isValidTimelineDateString,
+  parseTimelineDate,
+  compareDates,
+  type TimelineDate,
+} from './date.js';
 
 export { TimelineMediaSchema, type TimelineMedia } from './media.js';
 
@@ -39,3 +46,10 @@ export {
   type MigrationReport,
   type MigrationWarning,
 } from './migrate.js';
+
+export {
+  repairLegacyDateString,
+  repairTimelineDates,
+  type DateRepairReport,
+  type RepairedDateString,
+} from './repair.js';

@@ -27,6 +27,10 @@ export const TimelineMediaSchema = z
       .string()
       .optional()
       .describe('Optional thumbnail image URL or path used for previews and lazy loading.'),
+    aiGenerated: z
+      .boolean()
+      .optional()
+      .describe('Whether alt text or metadata on this media item was assisted by AI.'),
   })
   .superRefine((media, ctx) => {
     if (!isSafeMediaUrl(media.url, dataKindFor(media.type))) {

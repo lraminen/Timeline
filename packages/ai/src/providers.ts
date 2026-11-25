@@ -1,3 +1,5 @@
+import { z } from 'zod';
+import { zodToJsonSchema } from 'zod-to-json-schema';
 import type {
   AiCompletionRequest,
   AiCompletionResult,
@@ -8,22 +10,26 @@ import type {
   AiUsage,
 } from './types.js';
 
+const DEFAULT_TIMEOUT_MS = 30_000;
+
 const DEFAULT_MODELS: Record<AiProviderName, string> = {
   openai: 'gpt-4o-mini',
   gemini: 'gemini-2.5-flash',
-  anthropic: 'claude-3-5-haiku-latest',
+  anthropic: 'claude-opus-5-5',
   ollama: 'llama3.2',
   mock: 'mock-model',
 };
 
-/** Rough per-1M-token USD prices [inputUsd, outputUsd] for budget tracking. */
+/** Rough per-1M-token USD prices [inputUsd, outputUsd] for budget tracking (2026 rates). */
 const MODEL_PRICING: Record<string, [number, number]> = {
   'gpt-4o-mini': [0.15, 0.6],
+  'gpt-5-mini': [0.25, 2.0],
   'gpt-4o': [2.5, 10.0],
-  'gemini-2.5-flash': [0.15, 0.6],
+  'gemini-2.5-flash': [0.3, 2.5],
   'gemini-2.5-pro': [1.25, 10.0],
-  'claude-3-5-haiku-latest': [0.8, 4.0],
-  'claude-3-5-sonnet-latest': [3.0, 15.0],
+  'claude-opus-5-5': [4.0, 20.0],
+  'claude-sonnet-5-5': [2.0, 10.0],
+  'claude-haiku-5-5': [0.1, 0.5],
 };
 
 export function estimateCostMicros(
@@ -56,6 +62,8 @@ export class AiProviderError extends Error {
     readonly provider: AiProviderName,
     readonly status: number | undefined,
     message: string,
+    /** Internal diagnostic details for server logs only — never return directly to clients. */
+    readonly detail?: string,
   ) {
     super(message);
     this.name = 'AiProviderError';
@@ -82,7 +90,11 @@ export function extractJsonPayload(raw: string): unknown {
   }
 }
 
-function validateOutput<T>(request: AiCompletionRequest<T>, rawText: string, provider: AiProviderName): T {
+function validateOutput<T>(
+  request: AiCompletionRequest<T>,
+  rawText: string,
+  provider: AiProviderName,
+): T {
   let parsedJson: unknown;
   try {
     parsedJson = extractJsonPayload(rawText);
@@ -90,13 +102,19 @@ function validateOutput<T>(request: AiCompletionRequest<T>, rawText: string, pro
     throw new AiProviderError(
       provider,
       undefined,
+      'AI provider returned invalid JSON',
       `Failed to parse JSON from ${provider}: ${err instanceof Error ? err.message : String(err)}`,
     );
   }
   const checked = request.schema.safeParse(parsedJson);
   if (!checked.success) {
     const msg = checked.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; ');
-    throw new AiProviderError(provider, undefined, `Model output failed schema validation: ${msg}`);
+    throw new AiProviderError(
+      provider,
+      undefined,
+      'AI provider output failed validation',
+      `Model output failed schema validation: ${msg}`,
+    );
   }
   return checked.data;
 }
@@ -121,22 +139,124 @@ async function postJson(
   url: string,
   headers: Record<string, string>,
   body: unknown,
+  timeoutMs = DEFAULT_TIMEOUT_MS,
 ): Promise<Record<string, unknown>> {
-  const res = await fetchFn(url, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', ...headers },
-    body: JSON.stringify(body),
-  });
+  let res: Response;
+  try {
+    res = await fetchFn(url, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', ...headers },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
+    const isTimeout =
+      err instanceof Error && (err.name === 'TimeoutError' || err.name === 'AbortError');
+    throw new AiProviderError(
+      provider,
+      isTimeout ? 504 : undefined,
+      isTimeout ? 'AI provider request timed out' : 'AI provider request failed',
+      `${provider} network failure: ${detail}`,
+    );
+  }
+
   const text = await res.text();
   if (!res.ok) {
     throw new AiProviderError(
       provider,
       res.status,
+      'AI provider request failed',
       `${provider} API error (${String(res.status)}): ${text.slice(0, 300)}`,
     );
   }
   return JSON.parse(text) as Record<string, unknown>;
 }
+
+/**
+ * JSON Schema keywords that Anthropic structured outputs do not accept. Sending them
+ * returns a 400, so they are removed from the wire schema and restated in the
+ * description as a hint. The zod schema still enforces them when the response is validated.
+ */
+const ANTHROPIC_UNSUPPORTED_KEYWORDS = [
+  'minimum',
+  'maximum',
+  'exclusiveMinimum',
+  'exclusiveMaximum',
+  'multipleOf',
+  'minLength',
+  'maxLength',
+  'maxItems',
+  'minProperties',
+  'maxProperties',
+] as const;
+
+function stripUnsupportedConstraints(node: Record<string, unknown>): Record<string, unknown> {
+  const unsupported = new Set<string>(ANTHROPIC_UNSUPPORTED_KEYWORDS);
+  const hints: string[] = [];
+  const kept: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(node)) {
+    // Only minItems of 0 or 1 is supported.
+    const dropped =
+      key === '$schema' ||
+      unsupported.has(key) ||
+      (key === 'minItems' && typeof value === 'number' && value > 1);
+    if (!dropped) {
+      kept[key] = value;
+    } else if (key !== '$schema') {
+      hints.push(`${key}: ${JSON.stringify(value)}`);
+    }
+  }
+  if (hints.length > 0) {
+    const note = `{${hints.join(', ')}}`;
+    kept.description =
+      typeof kept.description === 'string' && kept.description
+        ? `${kept.description} ${note}`
+        : note;
+  }
+  return kept;
+}
+
+function ensureAdditionalPropertiesFalse(node: unknown): unknown {
+  if (Array.isArray(node)) {
+    return node.map((item) => ensureAdditionalPropertiesFalse(item));
+  }
+  if (!node || typeof node !== 'object') return node;
+
+  const obj = stripUnsupportedConstraints(node as Record<string, unknown>);
+  if (obj.type === 'object' && obj.additionalProperties === undefined) {
+    obj.additionalProperties = false;
+  }
+  if (obj.properties && typeof obj.properties === 'object') {
+    const props = obj.properties as Record<string, unknown>;
+    const nextProps: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(props)) {
+      nextProps[k] = ensureAdditionalPropertiesFalse(v);
+    }
+    obj.properties = nextProps;
+  }
+  if (obj.items !== undefined) {
+    obj.items = ensureAdditionalPropertiesFalse(obj.items);
+  }
+  for (const key of ['anyOf', 'oneOf', 'allOf'] as const) {
+    if (Array.isArray(obj[key])) {
+      obj[key] = (obj[key] as unknown[]).map((v) => ensureAdditionalPropertiesFalse(v));
+    }
+  }
+  return obj;
+}
+
+function toAnthropicJsonSchema(
+  schema: z.ZodType<unknown, z.ZodTypeDef, unknown>,
+): Record<string, unknown> {
+  const raw = zodToJsonSchema(schema, { target: 'jsonSchema7', $refStrategy: 'none' });
+  return ensureAdditionalPropertiesFalse(raw) as Record<string, unknown>;
+}
+
+const AltTextOutputSchema = z.object({
+  altText: z.string(),
+  confidence: z.number(),
+});
 
 // ---------------------------------------------------------------------------
 // OpenAI
@@ -148,14 +268,16 @@ export class OpenAiProvider implements AiProvider {
   readonly supportsVision = true;
   private readonly baseUrl: string;
   private readonly fetchFn: typeof fetch;
+  private readonly timeoutMs: number;
 
   constructor(
     private readonly apiKey: string,
-    options?: { model?: string; baseUrl?: string; fetch?: typeof fetch },
+    options?: { model?: string; baseUrl?: string; fetch?: typeof fetch; timeoutMs?: number },
   ) {
     this.model = options?.model || DEFAULT_MODELS.openai;
     this.baseUrl = (options?.baseUrl || 'https://api.openai.com/v1').replace(/\/$/, '');
     this.fetchFn = options?.fetch ?? fetch;
+    this.timeoutMs = options?.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   }
 
   async completeStructured<T>(request: AiCompletionRequest<T>): Promise<AiCompletionResult<T>> {
@@ -177,11 +299,13 @@ export class OpenAiProvider implements AiProvider {
           { role: 'user', content: request.prompt },
         ],
       },
+      this.timeoutMs,
     );
 
     const choices = data.choices as { message?: { content?: string } }[] | undefined;
     const content = choices?.[0]?.message?.content ?? '';
-    const usageRaw = data.usage as { prompt_tokens?: number; completion_tokens?: number } | undefined;
+    const usageRaw = data.usage as
+      { prompt_tokens?: number; completion_tokens?: number } | undefined;
     const usage = buildUsage(
       this.name,
       this.model,
@@ -230,10 +354,12 @@ export class OpenAiProvider implements AiProvider {
           },
         ],
       },
+      this.timeoutMs,
     );
     const choices = data.choices as { message?: { content?: string } }[] | undefined;
     const content = choices?.[0]?.message?.content ?? '';
-    const usageRaw = data.usage as { prompt_tokens?: number; completion_tokens?: number } | undefined;
+    const usageRaw = data.usage as
+      { prompt_tokens?: number; completion_tokens?: number } | undefined;
     const parsed = extractJsonPayload(content) as { altText?: unknown; confidence?: unknown };
     if (typeof parsed.altText !== 'string' || !parsed.altText.trim()) {
       throw new AiProviderError(this.name, undefined, 'Model did not return altText');
@@ -265,10 +391,11 @@ export class GeminiProvider implements AiProvider {
   readonly supportsVision = true;
   private readonly baseUrl: string;
   private readonly fetchFn: typeof fetch;
+  private readonly timeoutMs: number;
 
   constructor(
     private readonly apiKey: string,
-    options?: { model?: string; baseUrl?: string; fetch?: typeof fetch },
+    options?: { model?: string; baseUrl?: string; fetch?: typeof fetch; timeoutMs?: number },
   ) {
     this.model = options?.model || DEFAULT_MODELS.gemini;
     this.baseUrl = (options?.baseUrl || 'https://generativelanguage.googleapis.com/v1beta').replace(
@@ -276,15 +403,16 @@ export class GeminiProvider implements AiProvider {
       '',
     );
     this.fetchFn = options?.fetch ?? fetch;
+    this.timeoutMs = options?.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   }
 
   async completeStructured<T>(request: AiCompletionRequest<T>): Promise<AiCompletionResult<T>> {
-    const url = `${this.baseUrl}/models/${encodeURIComponent(this.model)}:generateContent?key=${encodeURIComponent(this.apiKey)}`;
+    const url = `${this.baseUrl}/models/${encodeURIComponent(this.model)}:generateContent`;
     const data = await postJson(
       this.fetchFn,
       this.name,
       url,
-      {},
+      { 'x-goog-api-key': this.apiKey },
       {
         systemInstruction: { parts: [{ text: request.system }] },
         contents: [{ role: 'user', parts: [{ text: request.prompt }] }],
@@ -294,15 +422,14 @@ export class GeminiProvider implements AiProvider {
           responseMimeType: 'application/json',
         },
       },
+      this.timeoutMs,
     );
 
     const candidates = data.candidates as
-      | { content?: { parts?: { text?: string }[] } }[]
-      | undefined;
+      { content?: { parts?: { text?: string }[] } }[] | undefined;
     const content = candidates?.[0]?.content?.parts?.[0]?.text ?? '';
     const meta = data.usageMetadata as
-      | { promptTokenCount?: number; candidatesTokenCount?: number }
-      | undefined;
+      { promptTokenCount?: number; candidatesTokenCount?: number } | undefined;
 
     return {
       data: validateOutput(request, content, this.name),
@@ -323,12 +450,12 @@ export class GeminiProvider implements AiProvider {
     if (!request.imageBase64) {
       throw new AiProviderError(this.name, undefined, 'Gemini vision requires image bytes');
     }
-    const url = `${this.baseUrl}/models/${encodeURIComponent(this.model)}:generateContent?key=${encodeURIComponent(this.apiKey)}`;
+    const url = `${this.baseUrl}/models/${encodeURIComponent(this.model)}:generateContent`;
     const data = await postJson(
       this.fetchFn,
       this.name,
       url,
-      {},
+      { 'x-goog-api-key': this.apiKey },
       {
         contents: [
           {
@@ -343,14 +470,13 @@ export class GeminiProvider implements AiProvider {
         ],
         generationConfig: { temperature: 0.2, responseMimeType: 'application/json' },
       },
+      this.timeoutMs,
     );
     const candidates = data.candidates as
-      | { content?: { parts?: { text?: string }[] } }[]
-      | undefined;
+      { content?: { parts?: { text?: string }[] } }[] | undefined;
     const content = candidates?.[0]?.content?.parts?.[0]?.text ?? '';
     const meta = data.usageMetadata as
-      | { promptTokenCount?: number; candidatesTokenCount?: number }
-      | undefined;
+      { promptTokenCount?: number; candidatesTokenCount?: number } | undefined;
     const parsed = extractJsonPayload(content) as { altText?: unknown; confidence?: unknown };
     if (typeof parsed.altText !== 'string' || !parsed.altText.trim()) {
       throw new AiProviderError(this.name, undefined, 'Model did not return altText');
@@ -382,17 +508,20 @@ export class AnthropicProvider implements AiProvider {
   readonly supportsVision = true;
   private readonly baseUrl: string;
   private readonly fetchFn: typeof fetch;
+  private readonly timeoutMs: number;
 
   constructor(
     private readonly apiKey: string,
-    options?: { model?: string; baseUrl?: string; fetch?: typeof fetch },
+    options?: { model?: string; baseUrl?: string; fetch?: typeof fetch; timeoutMs?: number },
   ) {
     this.model = options?.model || DEFAULT_MODELS.anthropic;
     this.baseUrl = (options?.baseUrl || 'https://api.anthropic.com/v1').replace(/\/$/, '');
     this.fetchFn = options?.fetch ?? fetch;
+    this.timeoutMs = options?.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   }
 
   async completeStructured<T>(request: AiCompletionRequest<T>): Promise<AiCompletionResult<T>> {
+    const schema = toAnthropicJsonSchema(request.wireSchema ?? request.schema);
     const data = await postJson(
       this.fetchFn,
       this.name,
@@ -404,10 +533,16 @@ export class AnthropicProvider implements AiProvider {
       {
         model: this.model,
         max_tokens: request.maxTokens ?? 2048,
-        temperature: request.temperature ?? 0.2,
-        system: `${request.system}\nRespond with ONLY valid JSON.`,
+        system: request.system,
+        output_config: {
+          format: {
+            type: 'json_schema',
+            schema,
+          },
+        },
         messages: [{ role: 'user', content: request.prompt }],
       },
+      this.timeoutMs,
     );
 
     const blocks = data.content as { type?: string; text?: string }[] | undefined;
@@ -433,6 +568,7 @@ export class AnthropicProvider implements AiProvider {
     if (!request.imageBase64) {
       throw new AiProviderError(this.name, undefined, 'Anthropic vision requires image bytes');
     }
+    const schema = toAnthropicJsonSchema(AltTextOutputSchema);
     const data = await postJson(
       this.fetchFn,
       this.name,
@@ -444,8 +580,13 @@ export class AnthropicProvider implements AiProvider {
       {
         model: this.model,
         max_tokens: request.maxTokens ?? 300,
-        temperature: 0.2,
-        system: 'Return ONLY JSON {"altText": string, "confidence": number} for accessibility alt text.',
+        system: 'Describe the image concisely for accessibility alt text.',
+        output_config: {
+          format: {
+            type: 'json_schema',
+            schema,
+          },
+        },
         messages: [
           {
             role: 'user',
@@ -459,6 +600,7 @@ export class AnthropicProvider implements AiProvider {
           },
         ],
       },
+      this.timeoutMs,
     );
     const blocks = data.content as { type?: string; text?: string }[] | undefined;
     const content = blocks?.find((b) => b.type === 'text')?.text ?? '';
@@ -494,11 +636,18 @@ export class OllamaProvider implements AiProvider {
   readonly supportsVision = true;
   private readonly baseUrl: string;
   private readonly fetchFn: typeof fetch;
+  private readonly timeoutMs: number;
 
-  constructor(options?: { model?: string; baseUrl?: string; fetch?: typeof fetch }) {
+  constructor(options?: {
+    model?: string;
+    baseUrl?: string;
+    fetch?: typeof fetch;
+    timeoutMs?: number;
+  }) {
     this.model = options?.model || DEFAULT_MODELS.ollama;
     this.baseUrl = (options?.baseUrl || 'http://127.0.0.1:11434').replace(/\/$/, '');
     this.fetchFn = options?.fetch ?? fetch;
+    this.timeoutMs = options?.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   }
 
   async completeStructured<T>(request: AiCompletionRequest<T>): Promise<AiCompletionResult<T>> {
@@ -517,6 +666,7 @@ export class OllamaProvider implements AiProvider {
           { role: 'user', content: request.prompt },
         ],
       },
+      this.timeoutMs,
     );
     const msg = data.message as { content?: string } | undefined;
     const content = msg?.content ?? '';
@@ -554,6 +704,7 @@ export class OllamaProvider implements AiProvider {
           },
         ],
       },
+      this.timeoutMs,
     );
     const msg = data.message as { content?: string } | undefined;
     const parsed = extractJsonPayload(msg?.content ?? '') as {

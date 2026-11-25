@@ -1,5 +1,11 @@
 import { describe, it, expect } from 'vitest';
-import { TimelineDateSchema, parseTimelineDate, compareDates, type TimelineDate } from '../date.js';
+import {
+  TimelineDateSchema,
+  isValidTimelineDateString,
+  parseTimelineDate,
+  compareDates,
+  type TimelineDate,
+} from '../date.js';
 
 // ---------------------------------------------------------------------------
 // parseTimelineDate
@@ -139,5 +145,20 @@ describe('TimelineDateSchema', () => {
   it('rejects when start is not a string', () => {
     const result = TimelineDateSchema.safeParse({ start: 2024 });
     expect(result.success).toBe(false);
+  });
+
+  it('rejects invalid calendar dates and accepts valid leap dates', () => {
+    expect(isValidTimelineDateString('2024-02-29')).toBe(true);
+    expect(isValidTimelineDateString('2024-07-04T12:00:00Z')).toBe(true);
+    expect(isValidTimelineDateString('-0044-03-15')).toBe(true);
+
+    for (const bad of ['1969-13-45', '1969-02-31', '2023-02-29', '0000', 'February 31, 1969']) {
+      expect(isValidTimelineDateString(bad)).toBe(false);
+      expect(TimelineDateSchema.safeParse({ start: bad }).success).toBe(false);
+    }
+
+    expect(TimelineDateSchema.safeParse({ start: '2020-01-01', end: '2020-13-01' }).success).toBe(
+      false,
+    );
   });
 });

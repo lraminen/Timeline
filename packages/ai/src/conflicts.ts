@@ -1,4 +1,4 @@
-import { compareDates, type Timeline } from '@chronicle/schema';
+import { compareDates, type Timeline, type TimelineEvent } from '@chronicle/schema';
 import { z } from 'zod';
 import type { AiProvider, ConflictDetectionResult, TimelineConflict } from './types.js';
 
@@ -10,29 +10,17 @@ function normaliseTitle(title: string): string {
     .trim();
 }
 
-function datesOverlap(
-  aStart: string,
-  aEnd: string | undefined,
-  bStart: string,
-  bEnd: string | undefined,
-): boolean {
-  const effAEnd = aEnd ?? aStart;
-  const effBEnd = bEnd ?? bStart;
-  return (
-    compareDates({ start: aStart }, { start: effBEnd }) <= 0 &&
-    compareDates({ start: bStart }, { start: effAEnd }) <= 0
-  );
-}
-
 /**
  * Deterministic structural and chronological conflict checks on a Timeline.
- * Always runs locally without network or LLM calls.
+ * Uses hash indexing for duplicates and sorted per-group sweep for overlaps ($O(n \log n)$).
  */
 export function detectDeterministicConflicts(timeline: Timeline): TimelineConflict[] {
   const conflicts: TimelineConflict[] = [];
   const erasById = new Map(timeline.eras.map((e) => [e.id, e]));
+  const byTitleDate = new Map<string, TimelineEvent[]>();
+  const rangedByGroup = new Map<string, { event: TimelineEvent; normTitle: string }[]>();
 
-  // 1. Event range & era bounds
+  // 1. Event range, era bounds, and bucket indexing in a single O(n) pass
   for (const evt of timeline.events) {
     if (evt.date.end && compareDates({ start: evt.date.end }, evt.date) < 0) {
       conflicts.push({
@@ -65,19 +53,35 @@ export function detectDeterministicConflicts(timeline: Timeline): TimelineConfli
         }
       }
     }
+
+    const norm = normaliseTitle(evt.title);
+    if (norm) {
+      const key = `${evt.date.start}::${norm}`;
+      const bucket = byTitleDate.get(key);
+      if (bucket) bucket.push(evt);
+      else byTitleDate.set(key, [evt]);
+    }
+
+    if (evt.group && evt.date.end) {
+      const list = rangedByGroup.get(evt.group);
+      const entry = { event: evt, normTitle: norm };
+      if (list) list.push(entry);
+      else rangedByGroup.set(evt.group, [entry]);
+    }
   }
 
-  // 2. Duplicate / overlapping events
-  for (let i = 0; i < timeline.events.length; i++) {
-    const a = timeline.events[i];
-    if (!a) continue;
-    const normA = normaliseTitle(a.title);
-    for (let j = i + 1; j < timeline.events.length; j++) {
-      const b = timeline.events[j];
-      if (!b) continue;
-      const normB = normaliseTitle(b.title);
-
-      if (normA && normA === normB && a.date.start === b.date.start) {
+  // 2. Duplicate events (O(n) for typical timelines via title+start bucket map)
+  const duplicatePairs = new Set<string>();
+  for (const bucket of byTitleDate.values()) {
+    if (bucket.length < 2) continue;
+    for (let i = 0; i < bucket.length; i++) {
+      const a = bucket[i];
+      if (!a) continue;
+      for (let j = i + 1; j < bucket.length; j++) {
+        const b = bucket[j];
+        if (!b) continue;
+        duplicatePairs.add(`${a.id}::${b.id}`);
+        duplicatePairs.add(`${b.id}::${a.id}`);
         conflicts.push({
           id: `dup:${a.id}:${b.id}`,
           kind: 'duplicate_event',
@@ -87,23 +91,34 @@ export function detectDeterministicConflicts(timeline: Timeline): TimelineConfli
           suggestion: 'Merge the two events or clarify their titles.',
           aiGenerated: false,
         });
-      } else if (
-        a.group &&
-        b.group &&
-        a.group === b.group &&
-        a.date.end &&
-        b.date.end &&
-        datesOverlap(a.date.start, a.date.end, b.date.start, b.date.end)
-      ) {
+      }
+    }
+  }
+
+  // 3. Per-group range overlaps via sorted sweep-line (O(n log n))
+  for (const [group, entries] of rangedByGroup) {
+    if (entries.length < 2) continue;
+    entries.sort((a, b) => compareDates(a.event.date, b.event.date));
+    let active: { event: TimelineEvent; normTitle: string }[] = [];
+
+    for (const curr of entries) {
+      const currStart = curr.event.date;
+      active = active.filter((prev) => {
+        const prevEnd = prev.event.date.end ?? prev.event.date.start;
+        return compareDates({ start: prevEnd }, currStart) >= 0;
+      });
+      for (const prev of active) {
+        if (duplicatePairs.has(`${prev.event.id}::${curr.event.id}`)) continue;
         conflicts.push({
-          id: `overlap:${a.id}:${b.id}`,
+          id: `overlap:${prev.event.id}:${curr.event.id}`,
           kind: 'overlapping_events',
           severity: 'warning',
-          eventIds: [a.id, b.id],
-          message: `Events “${a.title}” and “${b.title}” in group “${a.group}” have overlapping date ranges.`,
+          eventIds: [prev.event.id, curr.event.id],
+          message: `Events “${prev.event.title}” and “${curr.event.title}” in group “${group}” have overlapping date ranges.`,
           aiGenerated: false,
         });
       }
+      active.push(curr);
     }
   }
 

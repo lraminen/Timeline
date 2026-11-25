@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
 import { CircleAlert, CircleCheck, Sparkles, TriangleAlert, X } from 'lucide-react';
 import { detectDeterministicConflicts, type TimelineConflict } from '@chronicle/ai';
+import type { Timeline } from '@chronicle/schema';
 import { useCloud } from '../cloud/cloud-store.js';
 import { useEditor } from '../store/editor-store.js';
 
@@ -17,30 +18,44 @@ export function ConflictsDialog({
   const api = useCloud((s) => s.api);
   const user = useCloud((s) => s.user);
 
-  const [conflicts, setConflicts] = useState<TimelineConflict[]>([]);
-  const [aiChecked, setAiChecked] = useState(false);
+  const [deterministicConflicts, setDeterministicConflicts] = useState<TimelineConflict[]>([]);
+  const [aiConflicts, setAiConflicts] = useState<TimelineConflict[]>([]);
+  const [aiCheckedDoc, setAiCheckedDoc] = useState<Timeline | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!open) return;
-    setConflicts(detectDeterministicConflicts(useEditor.getState().doc));
-    setAiChecked(false);
+    setDeterministicConflicts(detectDeterministicConflicts(doc));
     setError(null);
   }, [open, doc]);
+
+  const aiChecked = aiCheckedDoc !== null;
+  const aiStale = aiChecked && aiCheckedDoc !== doc;
+  const conflicts = [...deterministicConflicts, ...aiConflicts];
 
   const runAiCheck = async () => {
     if (!api?.aiDetectConflicts || !user) return;
     setBusy(true);
     setError(null);
+    const snapshot = useEditor.getState().doc;
+    const compactTimeline: Timeline = {
+      ...snapshot,
+      events: snapshot.events.map((e) => ({
+        ...e,
+        media: [],
+        ...(e.body !== undefined ? { body: e.body.slice(0, 500) } : {}),
+      })),
+    };
     try {
       const res = await api.aiDetectConflicts({
-        timeline: useEditor.getState().doc,
+        timeline: compactTimeline,
         includeSemantic: true,
         projectId,
       });
-      setConflicts(res.conflicts);
-      setAiChecked(true);
+      setDeterministicConflicts(res.conflicts.filter((c) => !c.aiGenerated));
+      setAiConflicts(res.conflicts.filter((c) => c.aiGenerated));
+      setAiCheckedDoc(snapshot);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -84,6 +99,22 @@ export function ConflictsDialog({
               </button>
             )}
           </div>
+
+          {aiStale && (
+            <div className="mb-3 flex items-center justify-between gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+              <span>Timeline changed — previous AI results may be stale.</span>
+              {api?.aiDetectConflicts && user && (
+                <button
+                  type="button"
+                  className="font-medium underline"
+                  disabled={busy}
+                  onClick={() => void runAiCheck()}
+                >
+                  Re-run AI check
+                </button>
+              )}
+            </div>
+          )}
 
           {error && (
             <p role="alert" className="mb-3 text-xs text-red-700">

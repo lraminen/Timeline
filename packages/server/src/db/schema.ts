@@ -191,6 +191,7 @@ export const aiUsage = pgTable(
     operation: text('operation').notNull(),
     provider: text('provider').notNull(),
     model: text('model').notNull(),
+    status: text('status').notNull().default('completed'),
     inputTokens: integer('input_tokens').notNull().default(0),
     outputTokens: integer('output_tokens').notNull().default(0),
     estimatedCostMicros: integer('estimated_cost_micros').notNull().default(0),
@@ -201,3 +202,14 @@ export const aiUsage = pgTable(
     index('ai_usage_project_idx').on(t.projectId, t.createdAt),
   ],
 );
+
+/**
+ * One row per data migration that has run (see `db/data-migrations.ts`).
+ * Schema changes live in drizzle SQL migrations; this table guards one-off
+ * rewrites of stored documents so each runs once.
+ */
+export const dataMigrations = pgTable('data_migrations', {
+  name: text('name').primaryKey(),
+  appliedAt: timestamp('applied_at', { withTimezone: true }).notNull().defaultNow(),
+  details: jsonb('details').$type<Record<string, unknown>>().notNull().default({}),
+});

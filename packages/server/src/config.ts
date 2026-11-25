@@ -69,8 +69,9 @@ const EnvSchema = z
     AI_BASE_URL: z.string().url().optional(),
     AI_DAILY_REQUEST_LIMIT: z.coerce.number().int().positive().default(100),
     AI_DAILY_TOKEN_LIMIT: z.coerce.number().int().positive().default(500_000),
+    AI_MAX_CONCURRENT_PER_USER: z.coerce.number().int().positive().default(2),
     AI_MAX_DOCUMENT_KB: z.coerce.number().int().positive().default(1024),
-    AI_ALLOW_URL_FETCH: bool.default('true'),
+    AI_ALLOW_URL_FETCH: bool.default('false'),
   })
   .superRefine((env, ctx) => {
     if (

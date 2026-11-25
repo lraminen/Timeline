@@ -1,4 +1,4 @@
-import { validateTimeline, type Timeline } from '@chronicle/schema';
+import { repairTimelineDates, validateTimeline, type Timeline } from '@chronicle/schema';
 import {
   TimelineRenderer,
   BASE_STYLES,
@@ -112,13 +112,15 @@ export class ChronicleTimeline extends HTMLElement {
   /**
    * Accepts any value; it is validated against the Chronicle schema before
    * rendering. Invalid data emits `chronicle:error` and is not rendered.
+   * Date forms written by older releases (e.g. `1969-7-20`) are migrated
+   * first, so timelines published before calendar validation still render.
    */
   public set data(value: unknown) {
     if (value === null || value === undefined) {
       this._timelineData = null;
       return;
     }
-    const result = validateTimeline(value);
+    const result = validateTimeline(repairTimelineDates(value).timeline);
     if (!result.success) {
       this.emitError(describeValidationErrors(result.errors.issues));
       return;

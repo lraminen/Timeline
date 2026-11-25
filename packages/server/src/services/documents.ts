@@ -1,13 +1,17 @@
 import { and, eq, sql } from 'drizzle-orm';
-import { validateTimeline, type Timeline } from '@chronicle/schema';
+import { repairTimelineDates, validateTimeline, type Timeline } from '@chronicle/schema';
 import type { Db } from '../db/client.js';
 import { projects } from '../db/schema.js';
 import { ApiError, badRequest } from '../http.js';
 import { randomToken } from '../auth/crypto.js';
 
-/** Validates a timeline document, returning the parsed (defaulted) value. */
+/**
+ * Validates a timeline document, returning the parsed (defaulted) value.
+ * Date forms written by older releases are migrated first, so API clients and
+ * files that predate calendar validation keep working; the canonical form is stored.
+ */
 export function validateDocument(input: unknown): Timeline {
-  const result = validateTimeline(input);
+  const result = validateTimeline(repairTimelineDates(input).timeline);
   if (!result.success) {
     throw badRequest(
       'Timeline does not match the Chronicle schema',

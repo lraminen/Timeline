@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { isValidTimelineDateString } from './date.js';
 
 /**
  * Schema for a named era / period that spans a date range on the timeline.
@@ -15,6 +16,22 @@ export const TimelineEraSchema = z
       .describe(
         'Optional CSS color used to style the era band, e.g. "#6366f1" or "rebeccapurple".',
       ),
+  })
+  .superRefine((era, ctx) => {
+    if (!isValidTimelineDateString(era.start)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['start'],
+        message: 'Invalid calendar era start date string',
+      });
+    }
+    if (!isValidTimelineDateString(era.end)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['end'],
+        message: 'Invalid calendar era end date string',
+      });
+    }
   })
   .describe('A named era or period rendered as a coloured band behind the timeline.');
 

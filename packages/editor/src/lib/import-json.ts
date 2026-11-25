@@ -8,6 +8,7 @@ import {
 } from 'jsonc-parser';
 import {
   migrateFromTimelineJSWithReport,
+  repairTimelineDates,
   validateTimeline,
   type MigrationWarning,
   type Timeline,
@@ -101,7 +102,10 @@ export function importJson(text: string): JsonImportResult {
     return { ok: true, kind: 'timelinejs', timeline: result.data, warnings };
   }
 
-  const result = validateTimeline(value);
+  // Files exported by older releases can hold date forms the schema now rejects.
+  // Paths are unchanged by the migration, so issues still point into the source text.
+  const migrated = repairTimelineDates(value);
+  const result = validateTimeline(migrated.timeline);
   if (!result.success) {
     return {
       ok: false,
@@ -120,5 +124,5 @@ export function importJson(text: string): JsonImportResult {
       }),
     };
   }
-  return { ok: true, kind: 'chronicle', timeline: result.data, warnings: [] };
+  return { ok: true, kind: 'chronicle', timeline: result.data, warnings: migrated.warnings };
 }

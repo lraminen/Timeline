@@ -1,5 +1,6 @@
-import type { TimelineDate } from '@chronicle/schema';
+import { TimelineDateSchema, type TimelineDate } from '@chronicle/schema';
 import { z } from 'zod';
+import { AiProviderError } from './providers.js';
 import type { AiProvider, DateNormalizationResult } from './types.js';
 
 const MONTHS: Record<string, number> = {
@@ -50,6 +51,33 @@ function expandTwoDigitYear(shortYear: number): number {
   return shortYear <= 30 ? 2000 + shortYear : 1900 + shortYear;
 }
 
+function deterministicResult(
+  input: string,
+  date: TimelineDate,
+  confidence: number,
+  reasoning: string,
+): DateNormalizationResult {
+  const checked = TimelineDateSchema.safeParse(date);
+  if (!checked.success) {
+    return {
+      input,
+      date: null,
+      confidence: 0,
+      reasoning: 'Date values are outside valid calendar bounds.',
+      source: 'deterministic',
+      aiGenerated: false,
+    };
+  }
+  return {
+    input,
+    date: checked.data,
+    confidence,
+    reasoning,
+    source: 'deterministic',
+    aiGenerated: false,
+  };
+}
+
 /**
  * Deterministic natural-language date parser for common historical, seasonal,
  * decade, century, and approximate expressions. Works completely offline.
@@ -67,40 +95,57 @@ export function normalizeNaturalDateDeterministic(raw: string): DateNormalizatio
     };
   }
 
-  // Strip outer qualifiers like "in ", "around ", "the "
-  let text = input.replace(/^(?:in|on|during|around|about)\s+/i, '').trim();
-  text = text.replace(/^the\s+/i, '').trim();
-
+  let text = input;
   let approximate = false;
   let uncertain = false;
+
   if (text.endsWith('?') || /\b(?:possibly|perhaps|uncertain|maybe)\b/i.test(text)) {
     uncertain = true;
-    text = text.replace(/\?$/, '').replace(/\b(?:possibly|perhaps|uncertain|maybe)\b/gi, '').trim();
+    text = text
+      .replace(/\?$/, '')
+      .replace(/\b(?:possibly|perhaps|uncertain|maybe)\b/gi, '')
+      .trim();
   }
-  if (/^(?:c\.|ca\.|circa|~|approx\.?|roughly|around)\s*/i.test(text)) {
+
+  text = text.replace(/^(?:in|on|during)\s+/i, '').trim();
+  if (/^(?:c\.|ca\.|circa|~|approx\.?|approximately|roughly|around|about|nearly)\s*/i.test(text)) {
     approximate = true;
-    text = text.replace(/^(?:c\.|ca\.|circa|~|approx\.?|roughly|around)\s*/i, '').trim();
+    text = text
+      .replace(/^(?:c\.|ca\.|circa|~|approx\.?|approximately|roughly|around|about|nearly)\s*/i, '')
+      .trim();
   }
+  text = text.replace(/^the\s+/i, '').trim();
 
   // 1. Direct ISO / partial ISO: 1969, 1969-07, 1969-07-20, -0044
   const iso = /^(-?)(\d{1,6})(?:-(\d{2})(?:-(\d{2}))?)?$/.exec(text);
+  // A bare one- or two-digit number ("20", "5") is far more likely a day, an age or
+  // a typo than a year in the first century, so ask for an explicit form instead.
+  if (iso && !iso[1] && !iso[3] && (iso[2]?.length ?? 0) <= 2) {
+    return {
+      input: raw,
+      date: null,
+      confidence: 0,
+      reasoning:
+        'A one- or two-digit number is ambiguous; write the year as e.g. "20 CE" or "0020".',
+      source: 'deterministic',
+      aiGenerated: false,
+    };
+  }
   if (iso) {
     const bce = iso[1] === '-';
     const year = Number(iso[2]);
     if (year >= 1) {
       const start = `${padYear(year, bce)}${iso[3] ? `-${iso[3]}` : ''}${iso[4] ? `-${iso[4]}` : ''}`;
-      return {
-        input: raw,
-        date: {
+      return deterministicResult(
+        raw,
+        {
           start,
           ...(approximate ? { approximate: true } : {}),
           ...(uncertain ? { uncertain: true } : {}),
         },
-        confidence: 0.99,
-        reasoning: 'Parsed ISO / partial-ISO date.',
-        source: 'deterministic',
-        aiGenerated: false,
-      };
+        0.99,
+        'Parsed ISO / partial-ISO date.',
+      );
     }
   }
 
@@ -110,24 +155,23 @@ export function normalizeNaturalDateDeterministic(raw: string): DateNormalizatio
     const bce = /^b/i.test(eraOnly[2]);
     const year = Number(eraOnly[1]);
     if (year >= 1) {
-      return {
-        input: raw,
-        date: {
+      return deterministicResult(
+        raw,
+        {
           start: padYear(year, bce),
           ...(approximate ? { approximate: true } : {}),
           ...(uncertain ? { uncertain: true } : {}),
         },
-        confidence: 0.96,
-        reasoning: `Parsed ${bce ? 'BCE' : 'CE'} year.`,
-        source: 'deterministic',
-        aiGenerated: false,
-      };
+        0.96,
+        `Parsed ${bce ? 'BCE' : 'CE'} year.`,
+      );
     }
   }
 
   // 3. Seasonal expressions: "summer of '69", "Summer 1969", "Winter of 1941"
-  const seasonMatch =
-    /^(spring|summer|autumn|fall|winter)(?:\s+of)?\s+(?:'(\d{2})|(\d{4}))$/i.exec(text);
+  const seasonMatch = /^(spring|summer|autumn|fall|winter)(?:\s+of)?\s+(?:'(\d{2})|(\d{4}))$/i.exec(
+    text,
+  );
   if (seasonMatch?.[1]) {
     const season = SEASONS[seasonMatch[1].toLowerCase()];
     const year = seasonMatch[2]
@@ -135,21 +179,18 @@ export function normalizeNaturalDateDeterministic(raw: string): DateNormalizatio
       : Number(seasonMatch[3]);
     if (season && year >= 1) {
       const endYear = season.startMonth > season.endMonth ? year + 1 : year;
-      const date: TimelineDate = {
-        start: `${padYear(year)}-${pad2(season.startMonth)}`,
-        end: `${padYear(endYear)}-${pad2(season.endMonth)}`,
-        approximate: true,
-        ...(uncertain ? { uncertain: true } : {}),
-        displayOverride: `${season.label} ${String(year)}`,
-      };
-      return {
-        input: raw,
-        date,
-        confidence: 0.88,
-        reasoning: `Mapped "${seasonMatch[1]}" to seasonal month range.`,
-        source: 'deterministic',
-        aiGenerated: false,
-      };
+      return deterministicResult(
+        raw,
+        {
+          start: `${padYear(year)}-${pad2(season.startMonth)}`,
+          end: `${padYear(endYear)}-${pad2(season.endMonth)}`,
+          approximate: true,
+          ...(uncertain ? { uncertain: true } : {}),
+          displayOverride: `${season.label} ${String(year)}`,
+        },
+        0.88,
+        `Mapped "${seasonMatch[1]}" to seasonal month range.`,
+      );
     }
   }
 
@@ -160,25 +201,24 @@ export function normalizeNaturalDateDeterministic(raw: string): DateNormalizatio
     const year = Number(quarterMatch[2]);
     const startMonth = (q - 1) * 3 + 1;
     const endMonth = q * 3;
-    return {
-      input: raw,
-      date: {
+    return deterministicResult(
+      raw,
+      {
         start: `${padYear(year)}-${pad2(startMonth)}`,
         end: `${padYear(year)}-${pad2(endMonth)}`,
         ...(approximate ? { approximate: true } : {}),
         ...(uncertain ? { uncertain: true } : {}),
         displayOverride: `Q${String(q)} ${String(year)}`,
       },
-      confidence: 0.94,
-      reasoning: `Parsed calendar quarter Q${String(q)}.`,
-      source: 'deterministic',
-      aiGenerated: false,
-    };
+      0.94,
+      `Parsed calendar quarter Q${String(q)}.`,
+    );
   }
 
   // 5. Decades: "1960s", "early 1920s", "late '80s"
-  const decadeMatch =
-    /^(?:(early|mid|late)[-\s]+)?(?:'(\d)0s|(\d{3})0s)(?:\s*(BCE|BC))?$/i.exec(text);
+  const decadeMatch = /^(?:(early|mid|late)[-\s]+)?(?:'(\d)0s|(\d{3})0s)(?:\s*(BCE|BC))?$/i.exec(
+    text,
+  );
   if (decadeMatch) {
     const part = decadeMatch[1]?.toLowerCase();
     const bce = Boolean(decadeMatch[4]);
@@ -194,39 +234,34 @@ export function normalizeNaturalDateDeterministic(raw: string): DateNormalizatio
     } else if (part === 'late') startY = decadeStart + 7;
 
     if (bce) {
-      // BCE counts down chronologically: earlier year is larger magnitude
       const earlier = decadeStart + 9;
       const later = decadeStart;
-      return {
-        input: raw,
-        date: {
+      return deterministicResult(
+        raw,
+        {
           start: padYear(earlier, true),
           end: padYear(later, true),
           approximate: true,
           ...(uncertain ? { uncertain: true } : {}),
           displayOverride: input,
         },
-        confidence: 0.85,
-        reasoning: 'Parsed BCE decade range.',
-        source: 'deterministic',
-        aiGenerated: false,
-      };
+        0.85,
+        'Parsed BCE decade range.',
+      );
     }
 
-    return {
-      input: raw,
-      date: {
+    return deterministicResult(
+      raw,
+      {
         start: padYear(startY),
         end: padYear(endY),
         approximate: true,
         ...(uncertain ? { uncertain: true } : {}),
         displayOverride: input,
       },
-      confidence: 0.88,
-      reasoning: `Parsed ${part ?? 'full'} decade range.`,
-      source: 'deterministic',
-      aiGenerated: false,
-    };
+      0.88,
+      `Parsed ${part ?? 'full'} decade range.`,
+    );
   }
 
   // 6. Centuries: "early 20th century", "19th century", "5th century BCE"
@@ -242,20 +277,18 @@ export function normalizeNaturalDateDeterministic(raw: string): DateNormalizatio
       if (bce) {
         const earlier = c * 100;
         const later = (c - 1) * 100 + 1;
-        return {
-          input: raw,
-          date: {
+        return deterministicResult(
+          raw,
+          {
             start: padYear(earlier, true),
             end: padYear(later, true),
             approximate: true,
             ...(uncertain ? { uncertain: true } : {}),
             displayOverride: input,
           },
-          confidence: 0.84,
-          reasoning: `Parsed ${String(c)}th century BCE range.`,
-          source: 'deterministic',
-          aiGenerated: false,
-        };
+          0.84,
+          `Parsed ${String(c)}th century BCE range.`,
+        );
       }
       const cStart = (c - 1) * 100 + 1;
       const cEnd = c * 100;
@@ -267,24 +300,35 @@ export function normalizeNaturalDateDeterministic(raw: string): DateNormalizatio
         endY = cStart + 69;
       } else if (part === 'late') startY = cStart + 70;
 
-      return {
-        input: raw,
-        date: {
+      return deterministicResult(
+        raw,
+        {
           start: padYear(startY),
           end: padYear(endY),
           approximate: true,
           ...(uncertain ? { uncertain: true } : {}),
           displayOverride: input,
         },
-        confidence: 0.86,
-        reasoning: `Parsed ${part ?? 'full'} ${String(c)}th century range.`,
-        source: 'deterministic',
-        aiGenerated: false,
-      };
+        0.86,
+        `Parsed ${part ?? 'full'} ${String(c)}th century range.`,
+      );
     }
   }
 
-  // 7. Month-first or day-first English dates: "July 20, 1969", "20 July 1969", "May 1945"
+  // 7a. Month + day without year (e.g. "May 5", "July 4th") -> reject instead of treating day as year 5/4
+  const monthDayOnly = /^([A-Za-z]+)\.?\s+(\d{1,2})(?:st|nd|rd|th)?$/i.exec(text);
+  if (monthDayOnly?.[1] && MONTHS[monthDayOnly[1].toLowerCase()]) {
+    return {
+      input: raw,
+      date: null,
+      confidence: 0,
+      reasoning: 'Month and day require a year for timeline placement.',
+      source: 'deterministic',
+      aiGenerated: false,
+    };
+  }
+
+  // 7b. Month-first: "July 20, 1969" (with day + year) OR "May 1945" / "May 44 BC" (year >= 3 digits or explicit era)
   const monthFirst =
     /^([A-Za-z]+)\.?\s+(?:(\d{1,2})(?:st|nd|rd|th)?,?\s+)?(\d{1,6})(?:\s*(BCE|BC|CE|AD))?$/i.exec(
       text,
@@ -292,46 +336,44 @@ export function normalizeNaturalDateDeterministic(raw: string): DateNormalizatio
   if (monthFirst?.[1] && monthFirst[3]) {
     const month = MONTHS[monthFirst[1].toLowerCase()];
     const day = monthFirst[2] ? Number(monthFirst[2]) : undefined;
-    const year = Number(monthFirst[3]);
-    const bce = Boolean(monthFirst[4] && /^b/i.test(monthFirst[4]));
-    if (month && year >= 1 && (!day || (day >= 1 && day <= 31))) {
-      return {
-        input: raw,
-        date: {
-          start: `${padYear(year, bce)}-${pad2(month)}${day ? `-${pad2(day)}` : ''}`,
+    const yearStr = monthFirst[3];
+    const era = monthFirst[4];
+    const year = Number(yearStr);
+    const bce = Boolean(era && /^b/i.test(era));
+    const hasYearPrecision = Boolean(day) || Boolean(era) || yearStr.length >= 3;
+    if (month && hasYearPrecision && year >= 1) {
+      return deterministicResult(
+        raw,
+        {
+          start: `${padYear(year, bce)}-${pad2(month)}${day !== undefined ? `-${pad2(day)}` : ''}`,
           ...(approximate ? { approximate: true } : {}),
           ...(uncertain ? { uncertain: true } : {}),
         },
-        confidence: 0.96,
-        reasoning: 'Parsed English month date.',
-        source: 'deterministic',
-        aiGenerated: false,
-      };
+        0.96,
+        'Parsed English month date.',
+      );
     }
   }
 
+  // 7c. Day-first: "20 July 1969"
   const dayFirst =
-    /^(\d{1,2})(?:st|nd|rd|th)?\s+([A-Za-z]+)\.?,?\s+(\d{1,6})(?:\s*(BCE|BC|CE|AD))?$/i.exec(
-      text,
-    );
+    /^(\d{1,2})(?:st|nd|rd|th)?\s+([A-Za-z]+)\.?,?\s+(\d{1,6})(?:\s*(BCE|BC|CE|AD))?$/i.exec(text);
   if (dayFirst?.[1] && dayFirst[2] && dayFirst[3]) {
     const day = Number(dayFirst[1]);
     const month = MONTHS[dayFirst[2].toLowerCase()];
     const year = Number(dayFirst[3]);
     const bce = Boolean(dayFirst[4] && /^b/i.test(dayFirst[4]));
-    if (month && day >= 1 && day <= 31 && year >= 1) {
-      return {
-        input: raw,
-        date: {
+    if (month && year >= 1) {
+      return deterministicResult(
+        raw,
+        {
           start: `${padYear(year, bce)}-${pad2(month)}-${pad2(day)}`,
           ...(approximate ? { approximate: true } : {}),
           ...(uncertain ? { uncertain: true } : {}),
         },
-        confidence: 0.96,
-        reasoning: 'Parsed day-month-year date.',
-        source: 'deterministic',
-        aiGenerated: false,
-      };
+        0.96,
+        'Parsed day-month-year date.',
+      );
     }
   }
 
@@ -387,7 +429,7 @@ export async function normalizeNaturalDate(
   });
 
   const d = res.data;
-  const date: TimelineDate = {
+  const candidate: TimelineDate = {
     start: d.start,
     ...(d.end ? { end: d.end } : {}),
     ...(d.approximate ? { approximate: true } : {}),
@@ -395,9 +437,19 @@ export async function normalizeNaturalDate(
     ...(d.displayOverride ? { displayOverride: d.displayOverride } : {}),
   };
 
+  const checked = TimelineDateSchema.safeParse(candidate);
+  if (!checked.success) {
+    throw new AiProviderError(
+      provider.name,
+      undefined,
+      'AI returned an invalid date format',
+      `Invalid LLM date for ${JSON.stringify(raw)}: ${JSON.stringify(candidate)}`,
+    );
+  }
+
   return {
     input: raw,
-    date,
+    date: checked.data,
     confidence: d.confidence,
     reasoning: d.reasoning,
     source: 'ai',
