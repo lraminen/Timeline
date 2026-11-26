@@ -12,7 +12,7 @@ const AddBody = z.object({ email: z.string().trim().toLowerCase().email(), role:
 const Params = z.object({ id: z.string().uuid(), userId: z.string().uuid() });
 
 export const collaboratorRoutes: FastifyPluginAsync = async (app) => {
-  const { db } = app.ctx;
+  const { db, collab } = app.ctx;
 
   app.get('/projects/:id/collaborators', async (request) => {
     const { id } = parse(z.object({ id: z.string().uuid() }), request.params, 'project id');
@@ -35,7 +35,7 @@ export const collaboratorRoutes: FastifyPluginAsync = async (app) => {
 
   /**
    * Adds an existing user by email. (Inviting people without an account
-   * needs email delivery, which arrives with notifications in Phase 6.)
+   * needs email delivery, which is not built yet.)
    */
   app.post('/projects/:id/collaborators', async (request, reply) => {
     const { id } = parse(z.object({ id: z.string().uuid() }), request.params, 'project id');
@@ -59,6 +59,7 @@ export const collaboratorRoutes: FastifyPluginAsync = async (app) => {
       .onConflictDoNothing()
       .returning();
     if (inserted.length === 0) throw conflict('That person is already a collaborator');
+    collab.updateAccess(id, user.id, body.role);
     await audit(
       db,
       {
@@ -86,6 +87,7 @@ export const collaboratorRoutes: FastifyPluginAsync = async (app) => {
       .where(and(eq(collaborators.projectId, id), eq(collaborators.userId, target)))
       .returning();
     if (updated.length === 0) throw notFound('Collaborator');
+    collab.updateAccess(id, target, role);
     await audit(
       db,
       {
@@ -110,6 +112,7 @@ export const collaboratorRoutes: FastifyPluginAsync = async (app) => {
       .where(and(eq(collaborators.projectId, id), eq(collaborators.userId, target)))
       .returning();
     if (removed.length === 0) throw notFound('Collaborator');
+    collab.updateAccess(id, target, null);
     await audit(
       db,
       {

@@ -1,8 +1,5 @@
-import { and, eq, sql } from 'drizzle-orm';
 import { repairTimelineDates, validateTimeline, type Timeline } from '@chronicle/schema';
-import type { Db } from '../db/client.js';
-import { projects } from '../db/schema.js';
-import { ApiError, badRequest } from '../http.js';
+import { badRequest } from '../http.js';
 import { randomToken } from '../auth/crypto.js';
 
 /**
@@ -54,79 +51,4 @@ export function parseIfMatch(header: string | undefined): number | null {
   return m ? Number(m[1]) : null;
 }
 
-export class DraftConflictError extends ApiError {
-  constructor(current: { draft: Timeline; draftVersion: number; updatedAt: Date }) {
-    super(412, 'draft_conflict', 'The draft changed since you loaded it', {
-      draftVersion: current.draftVersion,
-      updatedAt: current.updatedAt.toISOString(),
-      draft: current.draft,
-    });
-  }
-}
-
-/**
- * Writes a draft only if it is still at `expectedVersion` (optimistic
- * concurrency, a single atomic UPDATE). On mismatch, throws a 412 that
- * carries the current server copy so the client can resolve the conflict.
- */
-export async function writeDraft(
-  db: Db,
-  projectId: string,
-  doc: Timeline,
-  expectedVersion: number,
-): Promise<{ draftVersion: number; updatedAt: Date }> {
-  const normalised = normaliseForProject(doc, projectId);
-  const [row] = await db
-    .update(projects)
-    .set({
-      draft: normalised,
-      title: normalised.title || 'Untitled timeline',
-      draftVersion: sql`${projects.draftVersion} + 1`,
-      updatedAt: new Date(),
-    })
-    .where(and(eq(projects.id, projectId), eq(projects.draftVersion, expectedVersion)))
-    .returning({ draftVersion: projects.draftVersion, updatedAt: projects.updatedAt });
-  if (row) return row;
-
-  const [current] = await db
-    .select({
-      draft: projects.draft,
-      draftVersion: projects.draftVersion,
-      updatedAt: projects.updatedAt,
-    })
-    .from(projects)
-    .where(eq(projects.id, projectId))
-    .limit(1);
-  if (!current) throw new ApiError(404, 'not_found', 'Project not found');
-  throw new DraftConflictError(current);
-}
-
-/**
- * Applies a change to the current draft with automatic retry on concurrent
- * writes. Used by fine-grained endpoints (events) that don't require the
- * client to hold the whole document.
- */
-export async function updateDraft<T>(
-  db: Db,
-  projectId: string,
-  change: (doc: Timeline) => { doc: Timeline; result: T },
-  attempts = 5,
-): Promise<{ result: T; draftVersion: number }> {
-  for (let i = 0; i < attempts; i++) {
-    const [current] = await db
-      .select({ draft: projects.draft, draftVersion: projects.draftVersion })
-      .from(projects)
-      .where(eq(projects.id, projectId))
-      .limit(1);
-    if (!current) throw new ApiError(404, 'not_found', 'Project not found');
-    const { doc, result } = change(current.draft);
-    const validated = validateDocument(doc);
-    try {
-      const written = await writeDraft(db, projectId, validated, current.draftVersion);
-      return { result, draftVersion: written.draftVersion };
-    } catch (err) {
-      if (!(err instanceof DraftConflictError)) throw err;
-    }
-  }
-  throw new ApiError(409, 'busy', 'The draft is being edited heavily; please retry');
-}
+export { DraftConflictError } from './collab.js';

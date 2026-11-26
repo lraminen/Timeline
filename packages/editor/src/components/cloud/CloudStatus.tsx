@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Cloud, CloudAlert, CloudOff, CloudUpload, RefreshCw } from 'lucide-react';
 import { useCloud } from '../../cloud/cloud-store.js';
-import { linkCurrentDraft, pushDraft } from '../../cloud/sync.js';
+import { linkCurrentDraft, syncNow } from '../../cloud/sync.js';
 import { useEditor } from '../../store/editor-store.js';
 
 /** Sync status for drafts linked to a Chronicle server (hidden in local-only mode). */
@@ -108,7 +108,7 @@ export function CloudStatus() {
       {view.icon}
       {view.text}
       {sync.kind === 'error' && (
-        <button type="button" className="ml-1 underline" onClick={() => void pushDraft()}>
+        <button type="button" className="ml-1 underline" onClick={syncNow}>
           Retry
         </button>
       )}

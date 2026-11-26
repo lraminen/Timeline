@@ -18,6 +18,7 @@ import {
   LogIn,
   LogOut,
   KeyRound,
+  Webhook,
 } from 'lucide-react';
 import { getAllThemes } from '@chronicle/core';
 import type { TimelineSettings } from '@chronicle/schema';
@@ -27,6 +28,8 @@ import { addNewEvent, deleteSelected, duplicateSelected } from '../actions.js';
 import { IconButton } from './ui.js';
 import { useCloud } from '../cloud/cloud-store.js';
 import { ApiKeysDialog } from './cloud/ApiKeysDialog.js';
+import { WebhooksDialog } from './cloud/WebhooksDialog.js';
+import { PresenceAvatars } from './cloud/Presence.js';
 import { isApplePlatform, MOD_KEY } from '../lib/platform.js';
 
 const isMac = isApplePlatform();
@@ -88,6 +91,8 @@ function AccountMenu({
   const user = useCloud((s) => s.user);
   const checking = useCloud((s) => s.checking);
   const [keysOpen, setKeysOpen] = useState(false);
+  const [webhooksOpen, setWebhooksOpen] = useState(false);
+  const isOwner = useEditor((s) => s.remote?.role === 'owner');
   if (!api) return null;
   if (checking) return <span className="px-2 text-xs text-slate-600">Connecting…</span>;
   if (!user) {
@@ -129,6 +134,16 @@ function AccountMenu({
             >
               <KeyRound size={15} aria-hidden /> API keys…
             </DropdownMenu.Item>
+            {isOwner && (
+              <DropdownMenu.Item
+                className={menuItem}
+                onSelect={() => {
+                  setWebhooksOpen(true);
+                }}
+              >
+                <Webhook size={15} aria-hidden /> Webhooks for this timeline…
+              </DropdownMenu.Item>
+            )}
             <DropdownMenu.Separator className="my-1 h-px bg-slate-200" />
             <DropdownMenu.Item
               className={menuItem}
@@ -145,6 +160,7 @@ function AccountMenu({
         </DropdownMenu.Portal>
       </DropdownMenu.Root>
       <ApiKeysDialog open={keysOpen} onOpenChange={setKeysOpen} />
+      <WebhooksDialog open={webhooksOpen} onOpenChange={setWebhooksOpen} />
     </>
   );
 }
@@ -317,6 +333,7 @@ export function Toolbar({
         </DropdownMenu.Root>
 
         <PublishButton onPublish={onPublish} onSignIn={onSignIn} />
+        <PresenceAvatars />
         <AccountMenu onSignIn={onSignIn} onOpenFromServer={onOpenFromServer} />
       </div>
     </header>

@@ -6,6 +6,7 @@ import type {
   ExtractionResult,
   SummarySuggestion,
 } from '@chronicle/ai';
+import type { CommentDto } from '@chronicle/collab';
 
 /**
  * Client for the Chronicle server API.
@@ -66,6 +67,44 @@ export interface AiStatus {
     dailyRequests: number;
     dailyTokens: number;
   };
+}
+
+export type WebhookEventType =
+  | 'timeline.published'
+  | 'draft.updated'
+  | 'comment.created'
+  | 'comment.updated'
+  | 'comment.deleted';
+
+export interface Webhook {
+  id: string;
+  url: string;
+  description: string;
+  events: WebhookEventType[];
+  active: boolean;
+  disabledReason: string | null;
+  consecutiveFailures: number;
+  createdAt: string;
+}
+
+export interface WebhookDelivery {
+  id: string;
+  eventType: string;
+  status: 'pending' | 'delivering' | 'succeeded' | 'failed';
+  attempts: number;
+  lastStatusCode: number | null;
+  lastError: string | null;
+  nextAttemptAt: string | null;
+  createdAt: string;
+}
+
+/** Result of an HTTP sync round (Yjs data base64-encoded). */
+export interface CollabSyncResult {
+  role: 'owner' | 'editor' | 'viewer';
+  update: string;
+  stateVector: string;
+  draftVersion: number;
+  problems: { path: string; message: string }[];
 }
 
 export class ApiRequestError extends Error {
@@ -144,6 +183,18 @@ export class ChronicleApi {
   }
 
   // --- Session ----------------------------------------------------------
+
+  /**
+   * A current access token for the collaboration socket (which can't use the
+   * cookie): refreshed first when it is missing or about to expire.
+   */
+  async getAccessToken(): Promise<string | null> {
+    const exp = this.accessToken ? tokenExpiry(this.accessToken) : 0;
+    if (!this.accessToken || exp - Date.now() < 60_000) {
+      if (!(await this.refresh())) return null;
+    }
+    return this.accessToken;
+  }
 
   /** Restores a session from the refresh cookie; `null` when signed out. */
   refresh(): Promise<User | null> {
@@ -322,6 +373,83 @@ export class ChronicleApi {
     return this.request('/ai/detect-conflicts', this.json('POST', input));
   }
 
+  // --- Real-time collaboration (Phase 6) ---------------------------------
+
+  /** WebSocket URL of a project's collaboration room. */
+  collabUrl(projectId: string): string {
+    return `${this.origin.replace(/^http/, 'ws')}/api/v1/projects/${projectId}/collab`;
+  }
+
+  /** Sync over HTTP: send our state vector (and changes), get back what we lack. */
+  collabSync(
+    projectId: string,
+    body: { stateVector?: string; update?: string },
+  ): Promise<CollabSyncResult> {
+    return this.request(`/projects/${projectId}/sync`, this.json('POST', body));
+  }
+
+  async listComments(projectId: string): Promise<CommentDto[]> {
+    const path = `/projects/${projectId}/comments`;
+    return (await this.request<{ comments: CommentDto[] }>(path)).comments;
+  }
+
+  createComment(
+    projectId: string,
+    input: { eventId?: string; parentId?: string; body: string },
+  ): Promise<CommentDto> {
+    return this.request(`/projects/${projectId}/comments`, this.json('POST', input));
+  }
+
+  updateComment(
+    projectId: string,
+    commentId: string,
+    input: { body?: string; resolved?: boolean },
+  ): Promise<CommentDto> {
+    return this.request(`/projects/${projectId}/comments/${commentId}`, this.json('PATCH', input));
+  }
+
+  async deleteComment(projectId: string, commentId: string): Promise<void> {
+    await this.request(`/projects/${projectId}/comments/${commentId}`, { method: 'DELETE' });
+  }
+
+  async listWebhooks(projectId: string): Promise<Webhook[]> {
+    const path = `/projects/${projectId}/webhooks`;
+    return (await this.request<{ webhooks: Webhook[] }>(path)).webhooks;
+  }
+
+  createWebhook(
+    projectId: string,
+    input: { url: string; events: WebhookEventType[]; description?: string },
+  ): Promise<Webhook & { secret: string }> {
+    return this.request(`/projects/${projectId}/webhooks`, this.json('POST', input));
+  }
+
+  updateWebhook(
+    projectId: string,
+    webhookId: string,
+    input: { url?: string; events?: WebhookEventType[]; active?: boolean },
+  ): Promise<Webhook> {
+    return this.request(`/projects/${projectId}/webhooks/${webhookId}`, this.json('PATCH', input));
+  }
+
+  async deleteWebhook(projectId: string, webhookId: string): Promise<void> {
+    await this.request(`/projects/${projectId}/webhooks/${webhookId}`, { method: 'DELETE' });
+  }
+
+  async rotateWebhookSecret(projectId: string, webhookId: string): Promise<string> {
+    const path = `/projects/${projectId}/webhooks/${webhookId}/rotate-secret`;
+    return (await this.request<{ secret: string }>(path, { method: 'POST' })).secret;
+  }
+
+  async testWebhook(projectId: string, webhookId: string): Promise<void> {
+    await this.request(`/projects/${projectId}/webhooks/${webhookId}/test`, { method: 'POST' });
+  }
+
+  async listWebhookDeliveries(projectId: string, webhookId: string): Promise<WebhookDelivery[]> {
+    const path = `/projects/${projectId}/webhooks/${webhookId}/deliveries`;
+    return (await this.request<{ deliveries: WebhookDelivery[] }>(path)).deliveries;
+  }
+
   // --- Public URLs ------------------------------------------------------
 
   pageUrl(slug: string): string {
@@ -330,6 +458,17 @@ export class ChronicleApi {
 
   embedUrl(slug: string): string {
     return `${this.origin}/api/v1/embed/${slug}`;
+  }
+}
+
+/** Expiry (ms since epoch) of a JWT; 0 when it can't be read. */
+function tokenExpiry(token: string): number {
+  try {
+    const part = (token.split('.')[1] ?? '').replace(/-/g, '+').replace(/_/g, '/');
+    const payload = JSON.parse(atob(part)) as { exp?: number };
+    return (payload.exp ?? 0) * 1000;
+  } catch {
+    return 0;
   }
 }
 

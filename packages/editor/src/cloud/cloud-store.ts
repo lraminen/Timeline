@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import type { Timeline } from '@chronicle/schema';
+import type { CommentDto, PresenceState } from '@chronicle/collab';
 import { ChronicleApi, type User } from '../lib/api.js';
 
 export type SyncState =
@@ -51,8 +52,37 @@ export type Api = Pick<
       | 'aiAltText'
       | 'aiNormalizeDate'
       | 'aiDetectConflicts'
+      | 'getAccessToken'
+      | 'collabUrl'
+      | 'collabSync'
+      | 'listComments'
+      | 'createComment'
+      | 'updateComment'
+      | 'deleteComment'
+      | 'listWebhooks'
+      | 'createWebhook'
+      | 'updateWebhook'
+      | 'deleteWebhook'
+      | 'rotateWebhookSecret'
+      | 'testWebhook'
+      | 'listWebhookDeliveries'
     >
   >;
+
+/** Live collaboration link state (the WebSocket, or the HTTP fallback). */
+export type Connection =
+  | 'off'
+  | 'connecting'
+  | 'live'
+  | 'reconnecting'
+  /** No WebSocket; syncing over plain HTTP every few seconds. */
+  | 'http'
+  | 'closed';
+
+/** Someone else in the timeline right now. */
+export interface Peer extends PresenceState {
+  clientId: number;
+}
 
 export interface CloudState {
   /** Null when no server is configured (local-only mode). */
@@ -62,6 +92,11 @@ export interface CloudState {
   checking: boolean;
   sync: SyncState;
   conflict: ConflictInfo | null;
+  connection: Connection;
+  /** Other people connected to the same timeline (one entry per browser tab). */
+  peers: Peer[];
+  /** Comments on the linked project, oldest first; null until loaded. */
+  comments: CommentDto[] | null;
   setApi: (api: Api | null) => void;
   setUser: (user: User | null) => void;
   setSync: (sync: SyncState) => void;
@@ -74,6 +109,9 @@ export const useCloud = create<CloudState>()((set) => ({
   checking: false,
   sync: { kind: 'local' },
   conflict: null,
+  connection: 'off',
+  peers: [],
+  comments: null,
   setApi: (api) => {
     set({ api, checking: api !== null });
   },

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'reac
 import { useEditor } from './store/editor-store.js';
 import { collectIssues, type Issue } from './lib/validation.js';
 import { saveDraft } from './lib/drafts.js';
+import { currentYState } from './cloud/session-registry.js';
 
 /** Validation issues for the current document (recomputed per revision). */
 export function useIssues(): Issue[] {
@@ -36,11 +37,8 @@ export function useAutosave(enabled: boolean): {
     () => async () => {
       setStatus({ state: 'saving' });
       try {
-        const at = await saveDraft(
-          latest.current.draftId,
-          latest.current.doc,
-          latest.current.remote,
-        );
+        const { draftId, doc, remote } = latest.current;
+        const at = await saveDraft(draftId, doc, remote, currentYState(draftId));
         setStatus({ state: 'saved', at });
       } catch (err) {
         setStatus({ state: 'error', message: err instanceof Error ? err.message : String(err) });

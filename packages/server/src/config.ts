@@ -72,6 +72,32 @@ const EnvSchema = z
     AI_MAX_CONCURRENT_PER_USER: z.coerce.number().int().positive().default(2),
     AI_MAX_DOCUMENT_KB: z.coerce.number().int().positive().default(1024),
     AI_ALLOW_URL_FETCH: bool.default('false'),
+
+    /** Real-time collaboration (Phase 6). Largest collaborative document, in MB. */
+    COLLAB_MAX_DOC_MB: z.coerce.number().positive().default(20),
+    COLLAB_MAX_CONNECTIONS_PER_USER: z.coerce.number().int().positive().default(20),
+    COLLAB_MAX_CONNECTIONS_PER_PROJECT: z.coerce.number().int().positive().default(100),
+    COLLAB_MAX_MESSAGES_PER_SECOND: z.coerce.number().int().positive().default(200),
+    /** Delay between the last live edit and saving the JSON draft. */
+    COLLAB_DRAFT_SAVE_MS: z.coerce.number().int().nonnegative().default(1000),
+    /**
+     * How often to pick up edits made through other server instances.
+     * Defaults to 1000 with PostgreSQL and 0 (off) with the embedded
+     * database, which only one process can open.
+     */
+    COLLAB_POLL_MS: z.coerce.number().int().nonnegative().optional(),
+    /** Fold the update log into the stored snapshot after this many rows. */
+    COLLAB_COMPACT_EVERY: z.coerce.number().int().positive().default(200),
+
+    /** Outgoing webhooks. Allows http:// and private/loopback addresses (development only). */
+    WEBHOOK_ALLOW_PRIVATE_URLS: bool.default('false'),
+    WEBHOOK_TIMEOUT_MS: z.coerce.number().int().positive().default(10_000),
+    WEBHOOK_MAX_ATTEMPTS: z.coerce.number().int().min(1).max(12).default(8),
+    /** At most one `draft.updated` delivery per project per this many seconds. */
+    WEBHOOK_DRAFT_INTERVAL_SECONDS: z.coerce.number().int().nonnegative().default(60),
+    /** Run the delivery worker in this process (turn off on API-only instances). */
+    WEBHOOK_WORKER: bool.default('true'),
+    WEBHOOK_POLL_MS: z.coerce.number().int().positive().default(5000),
   })
   .superRefine((env, ctx) => {
     if (
@@ -99,6 +125,13 @@ const EnvSchema = z
           code: 'custom',
           path: ['PUBLIC_URL'],
           message: 'is required in production',
+        });
+      }
+      if (env.WEBHOOK_ALLOW_PRIVATE_URLS) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['WEBHOOK_ALLOW_PRIVATE_URLS'],
+          message: 'must not be enabled in production (it lets webhooks reach internal services)',
         });
       }
     }

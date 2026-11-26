@@ -27,7 +27,11 @@ export type AuditAction =
   | 'ai.summarize'
   | 'ai.alt_text'
   | 'ai.normalize_date'
-  | 'ai.detect_conflicts';
+  | 'ai.detect_conflicts'
+  | 'webhook.create'
+  | 'webhook.update'
+  | 'webhook.delete'
+  | 'webhook.rotate_secret';
 
 export interface AuditEntry {
   action: AuditAction;

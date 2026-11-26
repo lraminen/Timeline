@@ -1,25 +1,18 @@
-import { ApiRequestError, DraftConflict } from '../lib/api.js';
 import { collectIssues, hasErrors } from '../lib/validation.js';
 import { newId } from '../lib/ids.js';
 import { useEditor, type RemoteLink } from '../store/editor-store.js';
-import { replaceDocument } from '../store/commands.js';
 import { useCloud } from './cloud-store.js';
-import { saveDraft } from '../lib/drafts.js';
+import { currentSession } from './session-registry.js';
 import type { Timeline } from '@chronicle/schema';
 
 /**
- * Editor ↔ server synchronisation.
+ * Editor ↔ server: linking drafts to projects, opening projects, publishing.
  *
- * The unit of sync is the whole draft, so the "queue" is simply the latest
- * local state plus a persisted `dirty` flag: edits made offline (or before
- * a reload) are pushed the next time we're online and signed in. Saves use
- * optimistic concurrency (If-Match); a 412 surfaces as a conflict the user
- * resolves explicitly.
+ * Keeping a linked draft in sync is the job of the live collaboration
+ * session (`collab-session.ts`): edits are merged with everyone else's as a
+ * CRDT, so there are no save conflicts. The only conflict left is for drafts
+ * with unsynced changes made before live collaboration existed.
  */
-
-function describe(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
-}
 
 /** JSON with object keys sorted, so key order (Postgres jsonb reorders) doesn't matter. */
 function canonical(value: unknown): string {
@@ -37,114 +30,27 @@ export function sameDocument(a: Timeline, b: Timeline): boolean {
   return canonical({ ...a, id: '' }) === canonical({ ...b, id: '' });
 }
 
-/**
- * Records a successful sync and persists the link immediately — not on the
- * autosave debounce — so a reload right after syncing can't resurrect a
- * stale base version (which would look like a conflict with ourselves).
- */
-function markSynced(version: number, stillDirty: boolean): void {
-  const editor = useEditor.getState();
-  if (!editor.remote) return;
-  const remote: RemoteLink = {
-    ...editor.remote,
-    baseVersion: version,
-    dirty: stillDirty,
-    lastSyncedAt: Date.now(),
-  };
-  editor.setRemote(remote);
-  void saveDraft(editor.draftId, editor.doc, remote).catch(() => undefined);
-  useCloud
-    .getState()
-    .setSync(stillDirty ? { kind: 'pending' } : { kind: 'synced', at: Date.now() });
-}
-
-/** Pushes the current draft if it has unsynced changes. Never throws. */
-export async function pushDraft(): Promise<void> {
-  const cloud = useCloud.getState();
-  const editor = useEditor.getState();
-  const { api, user } = cloud;
-  const { remote, doc, revision } = editor;
-
-  if (!api || !remote) {
-    cloud.setSync({ kind: 'local' });
-    return;
-  }
-  if (cloud.conflict) {
-    cloud.setSync({ kind: 'conflict' });
-    return;
-  }
-  if (!remote.dirty) {
-    cloud.setSync(
-      remote.lastSyncedAt ? { kind: 'synced', at: remote.lastSyncedAt } : { kind: 'pending' },
-    );
-    return;
-  }
-  if (!user) {
-    cloud.setSync({ kind: 'blocked', reason: 'Sign in to sync your changes' });
-    return;
-  }
-  if (remote.role === 'viewer') {
-    cloud.setSync({ kind: 'blocked', reason: 'You have view-only access to this timeline' });
-    return;
-  }
-  if (hasErrors(collectIssues(doc))) {
-    cloud.setSync({ kind: 'blocked', reason: 'Fix the problems in this timeline to sync it' });
-    return;
-  }
-  if (!navigator.onLine) {
-    cloud.setSync({ kind: 'offline' });
-    return;
-  }
-
-  cloud.setSync({ kind: 'syncing' });
-  try {
-    const version = await api.saveDraft(remote.projectId, doc, remote.baseVersion);
-    const now = useEditor.getState();
-    // The user may have switched documents while we were saving.
-    if (now.remote?.projectId !== remote.projectId) return;
-    const stillDirty = now.revision !== revision; // edited during the request
-    markSynced(version, stillDirty);
-  } catch (err) {
-    const c = useCloud.getState();
-    if (err instanceof DraftConflict && sameDocument(err.serverDraft, doc)) {
-      // Our own earlier save already landed (its response was lost, or the
-      // page reloaded before the new version was stored): not a conflict.
-      markSynced(err.serverVersion, useEditor.getState().revision !== revision);
-    } else if (err instanceof DraftConflict) {
-      c.setConflict({
-        serverVersion: err.serverVersion,
-        serverDraft: err.serverDraft,
-        serverUpdatedAt: err.serverUpdatedAt,
-      });
-      c.setSync({ kind: 'conflict' });
-    } else if (err instanceof ApiRequestError && err.status === 0) {
-      c.setSync({ kind: 'offline' });
-    } else if (err instanceof ApiRequestError && err.status === 401) {
-      c.setUser(null);
-      c.setSync({ kind: 'blocked', reason: 'Your session expired — sign in to sync' });
-    } else if (err instanceof ApiRequestError && (err.status === 403 || err.status === 404)) {
-      c.setSync({ kind: 'blocked', reason: 'You no longer have edit access to this timeline' });
-    } else {
-      c.setSync({ kind: 'error', message: describe(err) });
-    }
-  }
+/** Retries syncing now (reconnects, or syncs over HTTP). */
+export function syncNow(): void {
+  currentSession()?.retry();
 }
 
 /** Uploads the current local draft as a new server project and links it. */
 export async function linkCurrentDraft(): Promise<RemoteLink> {
   const { api } = useCloud.getState();
   if (!api) throw new Error('No Chronicle server configured');
-  const { doc, setRemote } = useEditor.getState();
+  const { doc, revision } = useEditor.getState();
   const project = await api.createProject(doc);
   const remote: RemoteLink = {
     projectId: project.id,
     slug: project.slug,
     role: project.role,
     baseVersion: project.draftVersion,
-    dirty: false,
+    // Edits made while the project was being created are merged by the session.
+    dirty: useEditor.getState().revision !== revision,
     lastSyncedAt: Date.now(),
   };
-  setRemote(remote);
+  useEditor.getState().setRemote(remote);
   // The server owns the document id from now on.
   useEditor.setState((s) => ({ doc: { ...s.doc, id: project.id } }));
   useCloud.getState().setSync({ kind: 'synced', at: Date.now() });
@@ -170,36 +76,19 @@ export async function openProject(projectId: string): Promise<void> {
 
 export type ConflictChoice = 'keep-mine' | 'use-theirs' | 'save-copy';
 
-/** Resolves a save conflict as the user chose. */
+/** Resolves a conflict (unsynced pre-collaboration changes) as the user chose. */
 export async function resolveConflict(choice: ConflictChoice): Promise<void> {
-  const cloud = useCloud.getState();
-  const editor = useEditor.getState();
-  const { conflict } = cloud;
-  const { remote } = editor;
-  if (!conflict || !remote) return;
-  cloud.setConflict(null);
-
-  if (choice === 'keep-mine') {
-    // Overwrite the server copy: rebase onto its version and push again.
-    editor.setRemote({ ...remote, baseVersion: conflict.serverVersion, dirty: true });
-    await pushDraft();
-  } else if (choice === 'use-theirs') {
-    // Undoable, so the user can still recover their own version.
-    editor.execute(replaceDocument(editor.doc, conflict.serverDraft, 'Use the server version'));
-    useEditor.getState().setRemote({
-      ...remote,
-      baseVersion: conflict.serverVersion,
-      dirty: false,
-      lastSyncedAt: Date.now(),
-    });
-    cloud.setSync({ kind: 'synced', at: Date.now() });
-  } else {
-    useEditor.getState().setRemote(null);
-    useEditor.setState((s) => ({
-      doc: { ...s.doc, title: `${s.doc.title} (my copy)` },
-    }));
-    await linkCurrentDraft();
+  const session = currentSession();
+  if (choice !== 'save-copy') {
+    session?.resolve(choice);
+    return;
   }
+  useCloud.getState().setConflict(null);
+  useEditor.getState().setRemote(null);
+  useEditor.setState((s) => ({
+    doc: { ...s.doc, title: `${s.doc.title} (my copy)` },
+  }));
+  await linkCurrentDraft();
 }
 
 export interface PublishResult {
@@ -212,33 +101,26 @@ export interface PublishResult {
 }
 
 /**
- * Publishes the current draft: links it if needed, makes sure the server has
- * the latest local changes, applies visibility (owners only) and publishes.
+ * Publishes the current draft: links it if needed, waits until the server
+ * has every local change, applies visibility (owners only) and publishes.
  */
 export async function publishCurrent(options: {
   message?: string;
   isPublic: boolean;
 }): Promise<PublishResult> {
-  const { api } = useCloud.getState();
+  const { api, conflict } = useCloud.getState();
   if (!api) throw new Error('No Chronicle server configured');
-  let remote = useEditor.getState().remote ?? (await linkCurrentDraft());
-
-  if (remote.dirty) {
-    await pushDraft();
-    const state = useCloud.getState().sync;
-    remote = useEditor.getState().remote ?? remote;
-    if (remote.dirty) {
-      throw new Error(
-        state.kind === 'blocked' || state.kind === 'error'
-          ? state.kind === 'blocked'
-            ? state.reason
-            : state.message
-          : state.kind === 'conflict'
-            ? 'Resolve the save conflict before publishing'
-            : 'Your latest changes are not saved to the server yet',
-      );
-    }
+  if (conflict) throw new Error('Resolve the save conflict before publishing');
+  // The server publishes its last valid draft; make sure that is this one.
+  if (hasErrors(collectIssues(useEditor.getState().doc))) {
+    throw new Error('Fix the problems in this timeline before publishing it');
   }
+  let remote = useEditor.getState().remote ?? (await linkCurrentDraft());
+  if (remote.role === 'viewer') throw new Error('You have view-only access to this timeline');
+
+  const session = currentSession();
+  if (session?.projectId === remote.projectId) await session.flush();
+  remote = useEditor.getState().remote ?? remote;
 
   let isPublic = options.isPublic;
   if (remote.role === 'owner') {

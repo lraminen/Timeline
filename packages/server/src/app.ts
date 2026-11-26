@@ -4,6 +4,7 @@ import cors from '@fastify/cors';
 import helmet from '@fastify/helmet';
 import multipart from '@fastify/multipart';
 import rateLimit from '@fastify/rate-limit';
+import websocket from '@fastify/websocket';
 import { ZodError } from 'zod';
 import type { AiProvider } from '@chronicle/ai';
 import type { Config } from './config.js';
@@ -27,6 +28,11 @@ import { mediaRoutes } from './routes/media.js';
 import { publicRoutes } from './routes/public.js';
 import { pageRoutes } from './routes/pages.js';
 import { aiRoutes } from './routes/ai.js';
+import { collabRoutes } from './routes/collab.js';
+import { commentRoutes } from './routes/comments.js';
+import { webhookRoutes } from './routes/webhooks.js';
+import { CollabService } from './services/collab.js';
+import { WebhookService } from './services/webhooks.js';
 
 export interface AuthContext {
   userId: string;
@@ -43,6 +49,9 @@ export interface AppContext {
   aiProvider: AiProvider | null;
   /** Injectable for tests; used by the media proxy and AI URL fetch. */
   fetch: typeof fetch;
+  /** Real-time collaboration rooms; every draft change goes through here. */
+  collab: CollabService;
+  webhooks: WebhookService;
 }
 
 declare module 'fastify' {
@@ -62,6 +71,8 @@ export interface AppOptions {
   cdn?: CdnInvalidator;
   aiProvider?: AiProvider | null;
   fetch?: typeof fetch;
+  /** Injectable for tests: how webhook requests are sent (default: SSRF-safe fetch). */
+  webhookFetch?: typeof fetch;
   logger?: boolean;
 }
 
@@ -93,6 +104,18 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
   });
 
   const fetchFn = options.fetch ?? fetch;
+  const webhookService = new WebhookService(database.db, config, app.log, options.webhookFetch);
+  const collabService = new CollabService({
+    db: database.db,
+    maxDocBytes: config.COLLAB_MAX_DOC_MB * 1024 * 1024,
+    draftSaveMs: config.COLLAB_DRAFT_SAVE_MS,
+    pollMs: config.COLLAB_POLL_MS ?? (database.driver === 'postgres' ? 1000 : 0),
+    compactEvery: config.COLLAB_COMPACT_EVERY,
+    log: app.log,
+    onDraftSaved: (projectId, saved) => {
+      webhookService.draftUpdated(projectId, saved);
+    },
+  });
   app.decorate('ctx', {
     config,
     db: database.db,
@@ -106,7 +129,14 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
         ? options.aiProvider
         : buildAiProviderFromConfig(config, fetchFn),
     fetch: fetchFn,
+    collab: collabService,
+    webhooks: webhookService,
   } satisfies AppContext);
+  // Save open collaborative documents and stop the webhook worker on shutdown.
+  app.addHook('onClose', async () => {
+    await collabService.close();
+    await webhookService.stop();
+  });
   app.decorateRequest('auth', null);
 
   // --- Security headers. API/JSON default: nothing may load or frame it.
@@ -146,6 +176,10 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
   });
 
   await app.register(cookie);
+  await app.register(websocket, {
+    // Room for one frame carrying a whole document; the room enforces the exact limit.
+    options: { maxPayload: Math.ceil(config.COLLAB_MAX_DOC_MB * 1024 * 1024 * 1.1) + 65_536 },
+  });
   await app.register(multipart, {
     limits: { fileSize: config.MAX_UPLOAD_MB * 1024 * 1024, files: 1, fields: 5 },
   });
@@ -235,10 +269,14 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
       await api.register(mediaRoutes);
       await api.register(publicRoutes);
       await api.register(aiRoutes);
+      await api.register(collabRoutes);
+      await api.register(commentRoutes);
+      await api.register(webhookRoutes);
     },
     { prefix: '/api/v1' },
   );
   await app.register(pageRoutes);
 
+  if (config.WEBHOOK_WORKER) webhookService.start();
   return app;
 }

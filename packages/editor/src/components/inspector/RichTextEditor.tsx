@@ -75,11 +75,18 @@ export function RichTextEditor({
     },
   });
 
-  // Follow external changes (undo/redo, import) without clobbering typing.
+  // Follow external changes (undo/redo, import, a collaborator's edit)
+  // without clobbering typing: the cursor stays where it was.
   useEffect(() => {
     if (value !== lastEmitted.current) {
       lastEmitted.current = value;
+      const { from, to } = editor.state.selection;
+      const focused = editor.isFocused;
       editor.commands.setContent(value, false);
+      if (focused) {
+        const max = editor.state.doc.content.size;
+        editor.commands.setTextSelection({ from: Math.min(from, max), to: Math.min(to, max) });
+      }
     }
   }, [value, editor]);
 

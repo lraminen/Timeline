@@ -48,6 +48,12 @@ export interface EditorState {
   /** Loads a document as a fresh editing session (clears history). */
   load: (doc: Timeline, draftId?: string, remote?: RemoteLink | null) => void;
   setRemote: (remote: RemoteLink | null) => void;
+  /**
+   * Shows a collaborator's change. Not an undo step: undo only ever reverts
+   * your own edits (each command patches just the fields it touched, so it
+   * leaves other people's work in place).
+   */
+  applyRemote: (doc: Timeline) => void;
 }
 
 const markDirty = (remote: RemoteLink | null): RemoteLink | null =>
@@ -159,6 +165,11 @@ export const useEditor = create<EditorState>()((set, get) => ({
 
   setRemote: (remote) => {
     set({ remote });
+  },
+
+  applyRemote: (doc) => {
+    const { selectedId, revision } = get();
+    set({ doc, revision: revision + 1, selectedId: existing(doc, selectedId) });
   },
 }));
 

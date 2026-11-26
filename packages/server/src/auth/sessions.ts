@@ -25,13 +25,22 @@ export async function signAccessToken(config: Config, userId: string): Promise<s
 
 /** Returns the user id, or `null` for any invalid/expired token. */
 export async function verifyAccessToken(config: Config, token: string): Promise<string | null> {
+  return (await verifyAccessTokenClaims(config, token))?.userId ?? null;
+}
+
+/** Like `verifyAccessToken`, also returning when the token expires (ms since epoch). */
+export async function verifyAccessTokenClaims(
+  config: Config,
+  token: string,
+): Promise<{ userId: string; expiresAt: number } | null> {
   try {
     const { payload } = await jwtVerify(token, config.jwtSecret, {
       issuer: config.publicUrl,
       audience: AUDIENCE,
       algorithms: ['HS256'],
     });
-    return payload.sub ?? null;
+    if (!payload.sub || payload.exp === undefined) return null;
+    return { userId: payload.sub, expiresAt: payload.exp * 1000 };
   } catch (err) {
     if (err instanceof joseErrors.JOSEError) return null;
     throw err;

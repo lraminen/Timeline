@@ -79,6 +79,7 @@ export const apiKeyRoutes: FastifyPluginAsync = async (app) => {
       .where(and(eq(apiKeys.id, id), eq(apiKeys.userId, userId), isNull(apiKeys.revokedAt)))
       .returning({ id: apiKeys.id });
     if (revoked.length === 0) throw notFound('API key');
+    app.ctx.collab.revokeApiKey(id);
     await audit(
       db,
       { action: 'api_key.revoke', actorId: userId, ip: request.ip, metadata: { keyId: id } },

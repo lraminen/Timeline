@@ -111,28 +111,52 @@ test('publishes a public timeline with a server-rendered page', async ({ page, c
   expect(errors).toEqual([]);
 });
 
-test('resolves a conflicting edit from another browser', async ({ page, browser }) => {
+test('merges live edits from two browsers, with presence and comments', async ({
+  page,
+  browser,
+}) => {
   const email = await signUp(page);
   await (await timelineTitle(page)).fill('Shared timeline');
   await saveToServer(page);
 
-  // A second device opens the same project and saves a change first.
+  // A second device opens the same project.
   const other = await browser.newContext({ baseURL: 'http://127.0.0.1:4174' });
   await useServer(other);
   const second = await other.newPage();
   await second.goto('/');
   await signIn(second, email);
   await openFromServer(second, 'Shared timeline');
-  await (await timelineTitle(second)).fill('Changed on the other device');
+
+  // Each sees the other (same account, another browser).
+  await expect(page.locator('[data-connection="live"]')).toHaveAttribute(
+    'aria-label',
+    'Also here: E2E Author',
+  );
+  await expect(second.locator('[data-connection="live"]')).toHaveAttribute(
+    'aria-label',
+    'Also here: E2E Author',
+  );
+
+  // Edits made at the same time in both browsers merge — no conflict dialog.
+  await titleInput(page).fill('Edited in browser A');
+  await (await timelineTitle(second)).fill('Renamed in browser B');
+  await expect(titleInput(second)).toHaveValue('Edited in browser A');
+  await expect(await timelineTitle(page)).toHaveValue('Renamed in browser B');
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  await expect(syncStatus(page)).toHaveAttribute('data-sync', 'synced');
   await expect(syncStatus(second)).toHaveAttribute('data-sync', 'synced');
 
-  // The first device, still on the old version, edits → conflict.
-  await (await timelineTitle(page)).fill('Changed here');
-  const conflict = page.getByRole('dialog', { name: 'This timeline changed somewhere else' });
-  await expect(conflict).toBeVisible();
-  await conflict.getByRole('button', { name: /Use the server version/ }).click();
-  await expect(await timelineTitle(page)).toHaveValue('Changed on the other device');
-  await expect(syncStatus(page)).toHaveAttribute('data-sync', 'synced');
+  // A comment on the event shows up live in the other browser.
+  await page.getByLabel('New comment on this event').fill('Is this date right?');
+  await page.getByRole('button', { name: 'Comment', exact: true }).click();
+  await expect(second.getByText('Is this date right?')).toBeVisible();
+  await second.getByRole('button', { name: 'Resolve' }).click();
+  await expect(page.getByRole('button', { name: 'Show 1 resolved' })).toBeVisible();
+
+  const axe = await new AxeBuilder({ page }).include('#inspector').analyze();
+  expect(axe.violations.filter((v) => v.impact === 'serious' || v.impact === 'critical')).toEqual(
+    [],
+  );
   await other.close();
 });
 

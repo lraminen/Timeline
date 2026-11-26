@@ -13,6 +13,8 @@ import { RichTextEditor } from './RichTextEditor.js';
 import { MediaManager } from './MediaManager.js';
 import { TagInput } from './TagInput.js';
 import { LocationFields } from './LocationFields.js';
+import { EventPresenceNotice } from '../cloud/Presence.js';
+import { CommentsPanel } from '../cloud/CommentsPanel.js';
 
 export function Inspector() {
   const event = useEditor(selectSelectedEvent);
@@ -92,6 +94,7 @@ function EventForm({ event }: { event: TimelineEvent }) {
           </div>
         }
       >
+        <EventPresenceNotice eventId={event.id} />
         {event.aiGenerated && (
           <div className="flex items-center justify-between rounded bg-purple-50 px-2 py-1 text-xs text-purple-900">
             <span className="inline-flex items-center gap-1 font-medium">
@@ -108,31 +111,35 @@ function EventForm({ event }: { event: TimelineEvent }) {
             </button>
           </div>
         )}
-        <Field label="Title" error={event.title.trim() ? null : 'Title is required'}>
-          {(p) => (
-            <input
-              {...p}
-              className="input"
-              value={event.title}
-              onChange={(e) => {
-                update({ title: e.target.value });
-              }}
-            />
-          )}
-        </Field>
+        <div data-presence-field="title">
+          <Field label="Title" error={event.title.trim() ? null : 'Title is required'}>
+            {(p) => (
+              <input
+                {...p}
+                className="input"
+                value={event.title}
+                onChange={(e) => {
+                  update({ title: e.target.value });
+                }}
+              />
+            )}
+          </Field>
+        </div>
 
-        <DateField
-          legend="Date"
-          value={event.date.start}
-          locale={locale}
-          error={fieldError('date.start')}
-          onChange={(start) => {
-            updateDate({ start });
-          }}
-          onApplyNormalized={(normalized) => {
-            update({ date: normalized });
-          }}
-        />
+        <div data-presence-field="date.start">
+          <DateField
+            legend="Date"
+            value={event.date.start}
+            locale={locale}
+            error={fieldError('date.start')}
+            onChange={(start) => {
+              updateDate({ start });
+            }}
+            onApplyNormalized={(normalized) => {
+              update({ date: normalized });
+            }}
+          />
+        </div>
 
         {event.date.end === undefined ? (
           <button
@@ -145,7 +152,7 @@ function EventForm({ event }: { event: TimelineEvent }) {
             + Add an end date (date range)
           </button>
         ) : (
-          <div className="space-y-1">
+          <div className="space-y-1" data-presence-field="date.end">
             <DateField
               legend="End date"
               value={event.date.end}
@@ -249,13 +256,15 @@ function EventForm({ event }: { event: TimelineEvent }) {
           ) : undefined
         }
       >
-        <RichTextEditor
-          label="Event description"
-          value={event.body ?? ''}
-          onChange={(body) => {
-            update({ body: body.trim() ? body : undefined });
-          }}
-        />
+        <div data-presence-field="body">
+          <RichTextEditor
+            label="Event description"
+            value={event.body ?? ''}
+            onChange={(body) => {
+              update({ body: body.trim() ? body : undefined });
+            }}
+          />
+        </div>
         {summaryError && (
           <p className="text-xs text-red-700" role="alert">
             {summaryError}
@@ -365,6 +374,12 @@ function EventForm({ event }: { event: TimelineEvent }) {
           }}
         />
       </Section>
+
+      {projectId && (
+        <Section title="Comments">
+          <CommentsPanel eventId={event.id} />
+        </Section>
+      )}
     </form>
   );
 }

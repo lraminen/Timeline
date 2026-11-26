@@ -14,6 +14,7 @@
   },
   "dependencies": {
     "@chronicle/ai": "workspace:*",
+    "@chronicle/collab": "workspace:*",
     "@chronicle/core": "workspace:*",
     "@chronicle/schema": "workspace:*",
     "@chronicle/web-component": "workspace:*",
@@ -38,6 +39,7 @@
     "react-dom": "19.0.0",
     "tiptap-markdown": "0.8.10",
     "workbox-window": "7.3.0",
+    "yjs": "13.6.33",
     "zustand": "5.0.2"
   },
   "devDependencies": {

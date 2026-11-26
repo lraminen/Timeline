@@ -14,9 +14,14 @@ export interface Draft {
   updatedAt: number;
   /** Server project this draft syncs with. */
   remote?: RemoteLink | null;
+  /**
+   * Collaborative (Yjs) state of a linked draft, so edits made offline merge
+   * with everyone else's when the editor reconnects.
+   */
+  ystate?: Uint8Array;
 }
 
-export type DraftSummary = Omit<Draft, 'doc' | 'remote'> & {
+export type DraftSummary = Omit<Draft, 'doc' | 'remote' | 'ystate'> & {
   eventCount: number;
   synced: boolean | null;
 };
@@ -38,14 +43,33 @@ function db(): Promise<IDBPDatabase<DraftsDB>> {
   return dbPromise;
 }
 
+/**
+ * Saves a draft. `ystate` omitted keeps the stored collaborative state of a
+ * linked draft (unlinked drafts have none).
+ */
 export async function saveDraft(
   id: string,
   doc: Timeline,
   remote: RemoteLink | null = null,
+  ystate?: Uint8Array,
 ): Promise<number> {
   const updatedAt = Date.now();
-  await (await db()).put('drafts', { id, title: doc.title, doc, updatedAt, remote });
+  const database = await db();
+  const kept = remote ? (ystate ?? (await database.get('drafts', id))?.ystate) : undefined;
+  await database.put('drafts', {
+    id,
+    title: doc.title,
+    doc,
+    updatedAt,
+    remote,
+    ...(kept ? { ystate: kept } : {}),
+  });
   return updatedAt;
+}
+
+/** The stored collaborative state of a draft, if any. */
+export async function loadYState(id: string): Promise<Uint8Array | null> {
+  return (await (await db()).get('drafts', id))?.ystate ?? null;
 }
 
 /**

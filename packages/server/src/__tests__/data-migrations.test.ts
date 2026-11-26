@@ -82,7 +82,7 @@ describe('data migrations', () => {
     expect(await runDataMigrations(db)).toEqual([]);
   });
 
-  it('adds ai_usage.status to a database that already applied the original 0001 migration', async () => {
+  it('upgrades a database that applied only the original 0000 and 0001 migrations', async () => {
     // Recreate a database as it was after commit 88991cc: migrations 0000 and 0001 only.
     const oldFolder = mkdtempSync(join(tmpdir(), 'chronicle-migrations-'));
     try {
@@ -91,7 +91,7 @@ describe('data migrations', () => {
       const journal = JSON.parse(readFileSync(journalPath, 'utf8')) as {
         entries: { tag: string }[];
       };
-      journal.entries = journal.entries.filter((e) => !e.tag.startsWith('0002'));
+      journal.entries = journal.entries.filter((e) => /^000[01]_/.test(e.tag));
       writeFileSync(journalPath, JSON.stringify(journal));
 
       const { PGlite } = await import('@electric-sql/pglite');
@@ -112,6 +112,21 @@ describe('data migrations', () => {
         // Upgrading with the current migration folder must add the column.
         await migrate(db, { migrationsFolder: MIGRATIONS });
         expect(await columns()).toContain('status');
+        // ...and the Phase 6 collaboration schema.
+        const projectColumns = (
+          await db.execute<{ column_name: string }>(
+            sql`select column_name from information_schema.columns where table_name = 'projects'`,
+          )
+        ).rows.map((r) => r.column_name);
+        expect(projectColumns).toEqual(expect.arrayContaining(['ydoc', 'ydoc_seq']));
+        const tables = (
+          await db.execute<{ table_name: string }>(
+            sql`select table_name from information_schema.tables where table_schema = 'public'`,
+          )
+        ).rows.map((r) => r.table_name);
+        expect(tables).toEqual(
+          expect.arrayContaining(['collab_updates', 'comments', 'webhooks', 'webhook_deliveries']),
+        );
       } finally {
         await client.close();
       }

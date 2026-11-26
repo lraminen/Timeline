@@ -8,7 +8,7 @@ import { ApiError, notFound, parse } from '../http.js';
 import { requireAuth } from '../app.js';
 import { requireProjectRole } from '../services/access.js';
 import { audit } from '../services/audit.js';
-import { etag, validateDocument, writeDraft } from '../services/documents.js';
+import { etag, validateDocument } from '../services/documents.js';
 
 const VersionParams = z.object({
   id: z.string().uuid(),
@@ -51,7 +51,23 @@ async function insertRevision(
 }
 
 export const revisionRoutes: FastifyPluginAsync = async (app) => {
-  const { db } = app.ctx;
+  const { db, config, collab } = app.ctx;
+
+  const notifyPublished = (
+    project: { id: string; slug: string },
+    version: number,
+    message: string | null,
+    authorId: string,
+  ) => {
+    app.ctx.webhooks.notify(project.id, 'timeline.published', {
+      version,
+      message,
+      authorId,
+      slug: project.slug,
+      pageUrl: `${config.publicUrl}/timeline/${project.slug}`,
+      embedUrl: `${config.publicUrl}/api/v1/embed/${project.slug}/v/${String(version)}`,
+    });
+  };
 
   app.get('/projects/:id/revisions', async (request) => {
     const { id } = parse(z.object({ id: z.string().uuid() }), request.params, 'project id');
@@ -99,8 +115,12 @@ export const revisionRoutes: FastifyPluginAsync = async (app) => {
   app.post('/projects/:id/revisions', async (request, reply) => {
     const { id } = parse(z.object({ id: z.string().uuid() }), request.params, 'project id');
     const { userId } = requireAuth(request);
-    const { project } = await requireProjectRole(db, id, userId, 'editor');
+    await requireProjectRole(db, id, userId, 'editor');
     const { message } = parse(PublishBody, request.body ?? {});
+    // Publish what collaborators see now: save live edits first.
+    await collab.flush(id);
+    const [project] = await db.select().from(projects).where(eq(projects.id, id)).limit(1);
+    if (!project) throw notFound('Project');
     // Re-validate: an export/publish must always be loadable.
     const data = validateDocument(project.draft);
     const version = await insertRevision(db, id, userId, data, message);
@@ -115,6 +135,7 @@ export const revisionRoutes: FastifyPluginAsync = async (app) => {
       },
       request.log,
     );
+    notifyPublished(project, version, message ?? null, userId);
     return reply.status(201).send({ version, publishedFromDraftVersion: project.draftVersion });
   });
 
@@ -140,7 +161,7 @@ export const revisionRoutes: FastifyPluginAsync = async (app) => {
       target.timelineData,
       `Rollback to version ${String(version)}`,
     );
-    const written = await writeDraft(db, id, target.timelineData, project.draftVersion);
+    const written = await collab.change(id, () => ({ doc: target.timelineData, result: null }));
     await audit(
       db,
       {
@@ -152,6 +173,7 @@ export const revisionRoutes: FastifyPluginAsync = async (app) => {
       },
       request.log,
     );
+    notifyPublished(project, newVersion, `Rollback to version ${String(version)}`, userId);
     void reply.header('etag', etag(written.draftVersion));
     return reply.status(201).send({ version: newVersion, draftVersion: written.draftVersion });
   });

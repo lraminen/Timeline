@@ -1,5 +1,8 @@
 import {
+  bigint,
+  bigserial,
   boolean,
+  customType,
   index,
   integer,
   jsonb,
@@ -9,10 +12,17 @@ import {
   timestamp,
   uniqueIndex,
   uuid,
+  type AnyPgColumn,
 } from 'drizzle-orm/pg-core';
 import type { Timeline } from '@chronicle/schema';
 
 const createdAt = () => timestamp('created_at', { withTimezone: true }).notNull().defaultNow();
+
+/** Binary column (Yjs state and updates). PGlite returns Uint8Array; node-postgres a Buffer (a subclass). */
+const bytea = customType<{ data: Uint8Array; driverData: Uint8Array }>({
+  dataType: () => 'bytea',
+  toDriver: (value) => Buffer.from(value.buffer, value.byteOffset, value.byteLength),
+});
 
 export const users = pgTable('users', {
   id: uuid('id').primaryKey().defaultRandom(),
@@ -42,6 +52,13 @@ export const projects = pgTable(
     shareNonce: uuid('share_nonce').notNull().defaultRandom(),
     /** Latest published revision number (null = never published). */
     publishedVersion: integer('published_version'),
+    /**
+     * Collaborative (Yjs) state, compacted: every `collab_updates` row up to
+     * `ydoc_seq` is folded in. Null until the project is first opened for
+     * collaboration; it is then built from `draft`.
+     */
+    ydoc: bytea('ydoc'),
+    ydocSeq: bigint('ydoc_seq', { mode: 'number' }).notNull().default(0),
     createdAt: createdAt(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
@@ -213,3 +230,116 @@ export const dataMigrations = pgTable('data_migrations', {
   appliedAt: timestamp('applied_at', { withTimezone: true }).notNull().defaultNow(),
   details: jsonb('details').$type<Record<string, unknown>>().notNull().default({}),
 });
+
+/**
+ * Append-only log of Yjs updates per project, folded into `projects.ydoc`
+ * from time to time. Writers hold a per-project advisory lock, so sequence
+ * numbers commit in order and any server instance can catch up by reading
+ * the rows after the last one it has seen.
+ */
+export const collabUpdates = pgTable(
+  'collab_updates',
+  {
+    seq: bigserial('seq', { mode: 'number' }).primaryKey(),
+    projectId: uuid('project_id')
+      .notNull()
+      .references(() => projects.id, { onDelete: 'cascade' }),
+    data: bytea('data').notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [index('collab_updates_project_seq_idx').on(t.projectId, t.seq)],
+);
+
+/**
+ * Threaded comments on events. A thread is a root comment (`parent_id` null)
+ * plus its replies; only roots can be resolved, and deleting a root deletes
+ * its replies. `event_id` is not a foreign key: events live inside the
+ * document, and comments on a deleted event are kept (an undo may restore it).
+ */
+export const comments = pgTable(
+  'comments',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    projectId: uuid('project_id')
+      .notNull()
+      .references(() => projects.id, { onDelete: 'cascade' }),
+    eventId: text('event_id').notNull(),
+    parentId: uuid('parent_id').references((): AnyPgColumn => comments.id, {
+      onDelete: 'cascade',
+    }),
+    authorId: uuid('author_id').references(() => users.id, { onDelete: 'set null' }),
+    body: text('body').notNull(),
+    createdAt: createdAt(),
+    editedAt: timestamp('edited_at', { withTimezone: true }),
+    resolvedAt: timestamp('resolved_at', { withTimezone: true }),
+    resolvedBy: uuid('resolved_by').references(() => users.id, { onDelete: 'set null' }),
+  },
+  (t) => [
+    index('comments_project_event_idx').on(t.projectId, t.eventId, t.createdAt),
+    index('comments_parent_idx').on(t.parentId),
+  ],
+);
+
+export const WEBHOOK_EVENTS = [
+  'timeline.published',
+  'draft.updated',
+  'comment.created',
+  'comment.updated',
+  'comment.deleted',
+] as const;
+export type WebhookEventType = (typeof WEBHOOK_EVENTS)[number] | 'ping';
+
+/**
+ * Outgoing webhooks. The signing secret must be usable for signing, so it is
+ * stored encrypted (AES-256-GCM with a key derived from JWT_SECRET) rather
+ * than hashed, and shown to the owner only when created or rotated.
+ */
+export const webhooks = pgTable(
+  'webhooks',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    projectId: uuid('project_id')
+      .notNull()
+      .references(() => projects.id, { onDelete: 'cascade' }),
+    url: text('url').notNull(),
+    description: text('description').notNull().default(''),
+    events: jsonb('events').$type<WebhookEventType[]>().notNull(),
+    secretEncrypted: text('secret_encrypted').notNull(),
+    active: boolean('active').notNull().default(true),
+    /** Why the webhook was switched off automatically (repeated failures). */
+    disabledReason: text('disabled_reason'),
+    consecutiveFailures: integer('consecutive_failures').notNull().default(0),
+    createdBy: uuid('created_by').references(() => users.id, { onDelete: 'set null' }),
+    createdAt: createdAt(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index('webhooks_project_idx').on(t.projectId)],
+);
+
+export type DeliveryStatus = 'pending' | 'delivering' | 'succeeded' | 'failed';
+
+/** One row per message per webhook. The payload is fixed, so retries send identical bytes. */
+export const webhookDeliveries = pgTable(
+  'webhook_deliveries',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    webhookId: uuid('webhook_id')
+      .notNull()
+      .references(() => webhooks.id, { onDelete: 'cascade' }),
+    /** Standard Webhooks message id (`webhook-id` header); the same on every retry. */
+    messageId: text('message_id').notNull(),
+    eventType: text('event_type').notNull(),
+    payload: text('payload').notNull(),
+    status: text('status').$type<DeliveryStatus>().notNull().default('pending'),
+    attempts: integer('attempts').notNull().default(0),
+    nextAttemptAt: timestamp('next_attempt_at', { withTimezone: true }).notNull().defaultNow(),
+    lastStatusCode: integer('last_status_code'),
+    lastError: text('last_error'),
+    lastAttemptAt: timestamp('last_attempt_at', { withTimezone: true }),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    index('webhook_deliveries_due_idx').on(t.status, t.nextAttemptAt),
+    index('webhook_deliveries_webhook_idx').on(t.webhookId, t.createdAt),
+  ],
+);

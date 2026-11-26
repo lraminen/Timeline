@@ -8,15 +8,8 @@ import { ApiError, conflict, forbidden, notFound, one, parse, UuidParam } from '
 import { requireAuth } from '../app.js';
 import { requireProjectRole, type Role } from '../services/access.js';
 import { audit } from '../services/audit.js';
-import {
-  etag,
-  parseIfMatch,
-  slugify,
-  SLUG,
-  updateDraft,
-  validateDocument,
-  writeDraft,
-} from '../services/documents.js';
+import { CloseCode } from '@chronicle/collab';
+import { etag, parseIfMatch, slugify, SLUG, validateDocument } from '../services/documents.js';
 import { createShareToken } from '../services/share.js';
 
 const CreateBody = z.object({
@@ -73,7 +66,19 @@ function summary(p: ProjectRow, role: Role) {
 }
 
 export const projectRoutes: FastifyPluginAsync = async (app) => {
-  const { db, config, storage, cdn } = app.ctx;
+  const { db, config, storage, cdn, collab } = app.ctx;
+
+  /**
+   * The project row with an up-to-date draft: live edits held by this
+   * instance's collaboration room are saved first.
+   */
+  async function withFreshDraft(project: ProjectRow): Promise<ProjectRow> {
+    if (!collab.peek(project.id)) return project;
+    await collab.flush(project.id);
+    const [row] = await db.select().from(projects).where(eq(projects.id, project.id)).limit(1);
+    if (!row) throw notFound('Project');
+    return row;
+  }
 
   app.get('/projects', async (request) => {
     const { userId } = requireAuth(request);
@@ -81,11 +86,19 @@ export const projectRoutes: FastifyPluginAsync = async (app) => {
       .select({ projectId: collaborators.projectId })
       .from(collaborators)
       .where(eq(collaborators.userId, userId));
-    const rows = await db
-      .select()
-      .from(projects)
-      .where(or(eq(projects.ownerId, userId), inArray(projects.id, shared)))
-      .orderBy(desc(projects.updatedAt));
+    const list = () =>
+      db
+        .select()
+        .from(projects)
+        .where(or(eq(projects.ownerId, userId), inArray(projects.id, shared)))
+        .orderBy(desc(projects.updatedAt));
+    let rows = await list();
+    // Titles and counts of timelines being edited live: save them first.
+    const open = rows.filter((p) => collab.peek(p.id));
+    if (open.length > 0) {
+      await Promise.all(open.map((p) => collab.flush(p.id)));
+      rows = await list();
+    }
     const roles = new Map(
       (
         await db
@@ -139,7 +152,7 @@ export const projectRoutes: FastifyPluginAsync = async (app) => {
       requireAuth(request).userId,
       'viewer',
     );
-    return summary(project, role);
+    return summary(await withFreshDraft(project), role);
   });
 
   app.patch('/projects/:id', async (request) => {
@@ -168,7 +181,7 @@ export const projectRoutes: FastifyPluginAsync = async (app) => {
     if (body.isPublic !== undefined) changes.isPublic = body.isPublic;
     if (body.title) {
       // Title lives in the document too; keep both in sync.
-      await updateDraft(db, id, (doc) => ({
+      await collab.change(id, (doc) => ({
         doc: { ...doc, title: body.title ?? doc.title },
         result: null,
       }));
@@ -212,6 +225,8 @@ export const projectRoutes: FastifyPluginAsync = async (app) => {
     const { id } = parse(UuidParam, request.params, 'project id');
     const { userId } = requireAuth(request);
     await requireProjectRole(db, id, userId, 'owner');
+    // Disconnect collaborators and drop unsaved live state: the project is going away.
+    await collab.closeProject(id, CloseCode.NotFound, 'This timeline was deleted');
 
     const items = await db
       .select({ metadata: media.metadata, storageKey: media.storageKey })
@@ -240,7 +255,13 @@ export const projectRoutes: FastifyPluginAsync = async (app) => {
 
   app.get('/projects/:id/draft', async (request, reply) => {
     const { id } = parse(UuidParam, request.params, 'project id');
-    const { project } = await requireProjectRole(db, id, requireAuth(request).userId, 'viewer');
+    const { project: row } = await requireProjectRole(
+      db,
+      id,
+      requireAuth(request).userId,
+      'viewer',
+    );
+    const project = await withFreshDraft(row);
     void reply.header('etag', etag(project.draftVersion)).header('cache-control', 'no-store');
     return {
       draftVersion: project.draftVersion,
@@ -261,7 +282,8 @@ export const projectRoutes: FastifyPluginAsync = async (app) => {
       );
     }
     const doc = validateDocument((request.body as { timeline?: unknown } | null)?.timeline);
-    const written = await writeDraft(db, id, doc, expected);
+    // Applied to the live document as a minimal diff, so connected editors see it at once.
+    const written = await collab.change(id, () => ({ doc, result: null }), expected);
     void reply.header('etag', etag(written.draftVersion));
     return { draftVersion: written.draftVersion, updatedAt: written.updatedAt.toISOString() };
   });
@@ -272,13 +294,25 @@ export const projectRoutes: FastifyPluginAsync = async (app) => {
 
   app.get('/projects/:id/events', async (request) => {
     const { id } = parse(UuidParam, request.params, 'project id');
-    const { project } = await requireProjectRole(db, id, requireAuth(request).userId, 'viewer');
+    const { project: row } = await requireProjectRole(
+      db,
+      id,
+      requireAuth(request).userId,
+      'viewer',
+    );
+    const project = await withFreshDraft(row);
     return { events: project.draft.events, draftVersion: project.draftVersion };
   });
 
   app.get('/projects/:id/events/:eventId', async (request) => {
     const { id, eventId } = parse(EventParams, request.params, 'path');
-    const { project } = await requireProjectRole(db, id, requireAuth(request).userId, 'viewer');
+    const { project: row } = await requireProjectRole(
+      db,
+      id,
+      requireAuth(request).userId,
+      'viewer',
+    );
+    const project = await withFreshDraft(row);
     const event = project.draft.events.find((e) => e.id === eventId);
     if (!event) throw notFound('Event');
     return event;
@@ -298,7 +332,7 @@ export const projectRoutes: FastifyPluginAsync = async (app) => {
       );
     }
     const event = parsed.data;
-    const { draftVersion } = await updateDraft(db, id, (doc) => {
+    const { draftVersion } = await collab.change(id, (doc) => {
       if (doc.events.some((e) => e.id === event.id))
         throw conflict(`An event with id "${event.id}" already exists`);
       return { doc: { ...doc, events: [...doc.events, event] }, result: null };
@@ -313,7 +347,7 @@ export const projectRoutes: FastifyPluginAsync = async (app) => {
     const patch = parse(z.record(z.unknown()), request.body, 'event changes');
     if ('id' in patch && patch.id !== eventId) throw forbidden('Event ids cannot be changed');
 
-    const { result, draftVersion } = await updateDraft(db, id, (doc) => {
+    const { result, draftVersion } = await collab.change(id, (doc) => {
       const index = doc.events.findIndex((e) => e.id === eventId);
       if (index === -1) throw notFound('Event');
       const merged = validateEvent({ ...doc.events[index], ...patch, id: eventId });
@@ -335,7 +369,7 @@ export const projectRoutes: FastifyPluginAsync = async (app) => {
   app.delete('/projects/:id/events/:eventId', async (request, reply) => {
     const { id, eventId } = parse(EventParams, request.params, 'path');
     await requireProjectRole(db, id, requireAuth(request).userId, 'editor');
-    const { draftVersion } = await updateDraft(db, id, (doc) => {
+    const { draftVersion } = await collab.change(id, (doc) => {
       if (!doc.events.some((e) => e.id === eventId)) throw notFound('Event');
       return { doc: { ...doc, events: doc.events.filter((e) => e.id !== eventId) }, result: null };
     });

@@ -16,10 +16,18 @@ import {
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { ArrowDownWideNarrow, GripVertical, Search, AlertCircle } from 'lucide-react';
+import {
+  ArrowDownWideNarrow,
+  GripVertical,
+  Search,
+  AlertCircle,
+  MessageSquare,
+} from 'lucide-react';
 import type { TimelineEvent } from '@chronicle/schema';
 import { formatDate, searchEvents } from '@chronicle/core';
 import { useEditor } from '../../store/editor-store.js';
+import { useCloud } from '../../cloud/cloud-store.js';
+import { EventPeers } from '../cloud/Presence.js';
 import { moveEvent, sortEventsByDate } from '../../store/commands.js';
 import { addNewEvent, deleteSelected } from '../../actions.js';
 import { useIssues } from '../../hooks.js';
@@ -54,6 +62,10 @@ function Row({
     disabled: !draggable,
   });
   const select = useEditor((s) => s.select);
+  const openThreads = useCloud(
+    (s) =>
+      s.comments?.filter((c) => c.eventId === event.id && !c.parentId && !c.resolvedAt).length ?? 0,
+  );
 
   return (
     <li
@@ -103,6 +115,14 @@ function Row({
               <span className="sr-only">(has errors)</span>
             </>
           )}
+          {openThreads > 0 && (
+            <span className="ml-auto inline-flex items-center gap-0.5 text-[11px] text-amber-800">
+              <MessageSquare size={11} aria-hidden />
+              {openThreads}
+              <span className="sr-only">open comment thread{openThreads === 1 ? '' : 's'}</span>
+            </span>
+          )}
+          <EventPeers eventId={event.id} />
         </span>
         <span className="block truncate text-sm font-medium text-slate-900">
           {event.title || <em className="font-normal text-slate-600">Untitled</em>}

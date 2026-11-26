@@ -8,5 +8,12 @@ export default defineConfig({
     // makes auth-heavy tests a little slower than typical unit tests.
     testTimeout: 20_000,
     hookTimeout: 30_000,
+    server: {
+      deps: {
+        // @chronicle/collab is a workspace package that vitest transforms; load
+        // Yjs the same way so there is a single copy (Yjs relies on instanceof).
+        inline: ['yjs', 'y-protocols', 'lib0'],
+      },
+    },
   },
 });
