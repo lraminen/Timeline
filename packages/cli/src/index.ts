@@ -1,14 +1,5 @@
 /**
- * @chronicle/cli
- *
- * Command-line interface for Chronicle timeline management.
- *
- * This package will contain:
- * - Timeline document validation against @chronicle/schema
- * - Export to multiple formats (HTML, PNG, SVG, PDF)
- * - Local dev server with hot reload
- * - Project scaffolding and initialization
- * - Configuration file management
+ * @chronicle/cli — programmatic entry point. `run(argv, io)` is what the
+ * `chronicle` command executes; static export itself lives in @chronicle/static.
  */
-
-export {};
+export { run, embedUrlFor, VERSION, type Io } from './run.js';

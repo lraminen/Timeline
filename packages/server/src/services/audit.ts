@@ -15,6 +15,7 @@ export type AuditAction =
   | 'project.slug_change'
   | 'project.publish'
   | 'project.rollback'
+  | 'project.export'
   | 'collaborator.add'
   | 'collaborator.update'
   | 'collaborator.remove'

@@ -7,6 +7,9 @@ export default defineConfig({
     // Each test file gets its own in-memory PGlite database; Argon2 hashing
     // makes auth-heavy tests a little slower than typical unit tests.
     testTimeout: 20_000,
+    // Each file boots its own PGlite (Postgres in WebAssembly); too many at once
+    // exhausts memory on smaller machines and every test then times out.
+    poolOptions: { forks: { maxForks: 4, minForks: 1 } },
     hookTimeout: 30_000,
     server: {
       deps: {

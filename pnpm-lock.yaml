@@ -78,12 +78,28 @@ importers:
 
   packages/cli:
     dependencies:
-      '@chronicle/core':
-        specifier: workspace:*
-        version: link:../core
       '@chronicle/schema':
         specifier: workspace:*
         version: link:../schema
+      '@chronicle/static':
+        specifier: workspace:*
+        version: link:../static
+      '@chronicle/web-component':
+        specifier: workspace:*
+        version: link:../web-component
+    devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.20.5
+      fflate:
+        specifier: 0.8.2
+        version: 0.8.2
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.9
+        version: 2.1.9(@types/node@22.20.5)(jsdom@25.0.1)(terser@5.51.2)
 
   packages/collab:
     dependencies:
@@ -140,6 +156,9 @@ importers:
       '@chronicle/schema':
         specifier: workspace:*
         version: link:../schema
+      '@chronicle/static':
+        specifier: workspace:*
+        version: link:../static
       '@chronicle/web-component':
         specifier: workspace:*
         version: link:../web-component
@@ -246,6 +265,9 @@ importers:
       fake-indexeddb:
         specifier: 6.0.0
         version: 6.0.0
+      fflate:
+        specifier: 0.8.2
+        version: 0.8.2
       jsdom:
         specifier: 25.0.1
         version: 25.0.1
@@ -304,6 +326,9 @@ importers:
       '@chronicle/schema':
         specifier: workspace:*
         version: link:../schema
+      '@chronicle/static':
+        specifier: workspace:*
+        version: link:../static
       '@chronicle/web-component':
         specifier: workspace:*
         version: link:../web-component
@@ -380,12 +405,34 @@ importers:
       drizzle-kit:
         specifier: 0.30.1
         version: 0.30.1
+      fflate:
+        specifier: 0.8.2
+        version: 0.8.2
       pino-pretty:
         specifier: 13.0.0
         version: 13.0.0
       tsx:
         specifier: 4.19.2
         version: 4.19.2
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.9
+        version: 2.1.9(@types/node@22.20.5)(jsdom@25.0.1)(terser@5.51.2)
+
+  packages/static:
+    dependencies:
+      '@chronicle/core':
+        specifier: workspace:*
+        version: link:../core
+      '@chronicle/schema':
+        specifier: workspace:*
+        version: link:../schema
+      fflate:
+        specifier: 0.8.2
+        version: 0.8.2
+    devDependencies:
       typescript:
         specifier: ^5.7.0
         version: 5.9.3

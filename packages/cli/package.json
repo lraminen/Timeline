@@ -1,10 +1,9 @@
 {
   "name": "@chronicle/cli",
   "version": "0.1.0",
-  "description": "CLI for validation, export, and dev server",
+  "description": "Chronicle command line: validate timelines, convert TimelineJS, export static sites",
   "type": "module",
   "main": "dist/index.js",
-  "module": "dist/index.js",
   "types": "dist/index.d.ts",
   "bin": {
     "chronicle": "dist/cli.js"
@@ -16,11 +15,26 @@
     }
   },
   "scripts": {
-    "build": "tsc --build",
+    "build": "tsc -p tsconfig.build.json",
+    "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@chronicle/schema": "workspace:*",
-    "@chronicle/core": "workspace:*"
+    "@chronicle/static": "workspace:*",
+    "@chronicle/web-component": "workspace:*"
+  },
+  "private": true,
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=20.6"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.7.0",
+    "vitest": "^2.1.9",
+    "fflate": "0.8.2"
   }
 }

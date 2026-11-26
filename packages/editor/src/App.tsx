@@ -7,6 +7,7 @@ import { createBlankTimeline, createSampleTimeline } from './lib/document.js';
 import { latestDraft, loadDraft, requestPersistentStorage } from './lib/drafts.js';
 import { newId } from './lib/ids.js';
 import { MOD_KEY } from './lib/platform.js';
+import { collectIssues } from './lib/validation.js';
 import { loadEditorConfig } from './lib/api.js';
 import { initCloud, useCloud } from './cloud/cloud-store.js';
 import { useCloudSync } from './cloud/use-cloud-sync.js';
@@ -89,7 +90,11 @@ export function App({ offlineReady = false }: { offlineReady?: boolean }) {
 
   useShortcuts({ onSave: () => void saveNow(), onNewEvent: addNewEvent });
 
-  const onExport = (format: 'json' | 'csv') => {
+  const onExport = (format: 'json' | 'csv' | 'site') => {
+    if (format === 'site') {
+      void exportSite();
+      return;
+    }
     const errors = exportDocument(format);
     if (errors.length) {
       setNotice({
@@ -99,6 +104,37 @@ export function App({ offlineReady = false }: { offlineReady?: boolean }) {
       setIssuesOpen(true);
     } else {
       setNotice({ text: `Exported ${format.toUpperCase()}.`, tone: 'info' });
+    }
+  };
+
+  const exportSite = async () => {
+    const { doc } = useEditor.getState();
+    const errors = collectIssues(doc).filter((i) => i.severity === 'error');
+    if (errors.length) {
+      setNotice({
+        text: `Fix ${String(errors.length)} problem${errors.length > 1 ? 's' : ''} before exporting: ${errors[0]?.message ?? ''}`,
+        tone: 'error',
+      });
+      setIssuesOpen(true);
+      return;
+    }
+    setNotice({ text: 'Preparing the static site…', tone: 'info' });
+    try {
+      const { exportStaticSite } = await import('./lib/static-export.js');
+      const result = await exportStaticSite(doc);
+      setNotice({
+        text: `Exported ${result.filename}: unzip it and open index.html — it works offline.${
+          result.notCopied
+            ? ` ${String(result.notCopied)} media item${result.notCopied > 1 ? 's' : ''} could not be copied and still need the internet.`
+            : ''
+        }`,
+        tone: 'info',
+      });
+    } catch (err) {
+      setNotice({
+        text: `Static export failed: ${err instanceof Error ? err.message : String(err)}`,
+        tone: 'error',
+      });
     }
   };
 

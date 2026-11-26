@@ -81,8 +81,11 @@ export function slugify(title: string): string {
 }
 
 /** Triggers a browser download of `content`. */
-export function downloadFile(filename: string, content: string, mime: string): void {
-  const blob = new Blob([content], { type: `${mime};charset=utf-8` });
+export function downloadFile(filename: string, content: string | Uint8Array, mime: string): void {
+  const blob =
+    typeof content === 'string'
+      ? new Blob([content], { type: `${mime};charset=utf-8` })
+      : new Blob([new Uint8Array(content)], { type: mime });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;

@@ -74,29 +74,33 @@ To point the editor at a server, serve a `config.json` next to the editor build:
 
 Authenticate with `Authorization: Bearer <access token>` or an API key (`Authorization: Bearer chr_…` or `X-API-Key`).
 
-|                                                                                            |                                                                                                                   |
-| ------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------- |
-| `POST /auth/register`, `POST /auth/login`                                                  | Returns an access token; sets the refresh cookie                                                                  |
-| `POST /auth/refresh`, `POST /auth/logout`                                                  | Cookie-based; rotates / revokes the session                                                                       |
-| `GET /me`                                                                                  |                                                                                                                   |
-| `GET/POST /api-keys`, `DELETE /api-keys/:id`                                               | Session only (an API key cannot manage keys)                                                                      |
-| `GET/POST /projects`, `GET/PATCH/DELETE /projects/:id`                                     | `PATCH` slug/visibility: owner                                                                                    |
-| `GET/PUT /projects/:id/draft`                                                              | `PUT` requires `If-Match: "<draftVersion>"`; `412` returns the current server copy                                |
-| `GET/POST /projects/:id/events`, `GET/PATCH/DELETE /projects/:id/events/:eventId`          | Fine-grained edits; concurrency-safe                                                                              |
-| `GET/POST /projects/:id/revisions`, `GET /projects/:id/revisions/:version`                 | `POST` publishes the draft                                                                                        |
-| `POST /projects/:id/rollback/:version`                                                     | Republishes an old version as a new one and resets the draft                                                      |
-| `GET/POST /projects/:id/collaborators`, `PATCH/DELETE /projects/:id/collaborators/:userId` | Roles: `editor`, `viewer`                                                                                         |
-| `GET/POST /projects/:id/media`, `DELETE /projects/:id/media/:mediaId`                      | Multipart field `file`                                                                                            |
-| `POST /projects/:id/share-links`, `DELETE /projects/:id/share-links`                       | Expiring links for private timelines; `DELETE` revokes all                                                        |
-| `GET /projects/:id/audit`                                                                  | Owner only                                                                                                        |
-| `GET /embed/:slug`, `GET /embed/:slug/v/:version`                                          | Public JSON with `pageUrl` (`?token=` for private; `?include=fallback` adds `fallbackHtml`, the no-JS event list) |
-| `GET /media-proxy?url=`                                                                    | Allowlisted image proxy                                                                                           |
-| `GET /ai/status`                                                                           | Returns provider readiness, today's request/token usage, and active quotas                                        |
-| `POST /ai/extract`                                                                         | Extracts dated event candidates (with citations & `sourceText`) from text, multipart file, or allowlisted URL     |
-| `POST /ai/summarize`                                                                       | Suggests a concise event description summary (`editor` role if `projectId` supplied)                              |
-| `POST /ai/alt-text`                                                                        | Suggests accessibility alt text from `imageDataUrl`, `/media/...` key, or allowlisted `https://` URL              |
-| `POST /ai/normalize-date`                                                                  | Deterministic date parser with optional LLM fallback                                                              |
-| `POST /ai/detect-conflicts`                                                                | Deterministic structural checks plus optional LLM semantic contradiction analysis (`viewer`+ if `projectId`)      |
+|                                                                                                             |                                                                                                                              |
+| ----------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `POST /auth/register`, `POST /auth/login`                                                                   | Returns an access token; sets the refresh cookie                                                                             |
+| `POST /auth/refresh`, `POST /auth/logout`                                                                   | Cookie-based; rotates / revokes the session                                                                                  |
+| `GET /me`                                                                                                   |                                                                                                                              |
+| `GET/POST /api-keys`, `DELETE /api-keys/:id`                                                                | Session only (an API key cannot manage keys)                                                                                 |
+| `GET/POST /projects`, `GET/PATCH/DELETE /projects/:id`                                                      | `PATCH` slug/visibility: owner                                                                                               |
+| `GET/PUT /projects/:id/draft`                                                                               | `PUT` requires `If-Match: "<draftVersion>"`; `412` returns the current server copy                                           |
+| `GET/POST /projects/:id/events`, `GET/PATCH/DELETE /projects/:id/events/:eventId`                           | Fine-grained edits; concurrency-safe                                                                                         |
+| `GET/POST /projects/:id/revisions`, `GET /projects/:id/revisions/:version`                                  | `POST` publishes the draft                                                                                                   |
+| `POST /projects/:id/rollback/:version`                                                                      | Republishes an old version as a new one and resets the draft                                                                 |
+| `GET/POST /projects/:id/collaborators`, `PATCH/DELETE /projects/:id/collaborators/:userId`                  | Roles: `editor`, `viewer`                                                                                                    |
+| `GET/POST /projects/:id/media`, `DELETE /projects/:id/media/:mediaId`                                       | Multipart field `file`                                                                                                       |
+| `POST /projects/:id/share-links`, `DELETE /projects/:id/share-links`                                        | Expiring links for private timelines; `DELETE` revokes all                                                                   |
+| `GET /projects/:id/audit`                                                                                   | Owner only                                                                                                                   |
+| `GET /projects/:id/export.zip[?version=n]`                                                                  | Static site archive of the draft or a published version (see `@chronicle/static`); copies own uploads and allowlisted images |
+| `WS /projects/:id/collab`, `POST /projects/:id/sync`                                                        | Live collaboration (Yjs) and its HTTP fallback                                                                               |
+| `GET/POST /projects/:id/comments`, `PATCH/DELETE /projects/:id/comments/:commentId`                         | Threaded event comments                                                                                                      |
+| `GET/POST /projects/:id/webhooks`, `PATCH/DELETE …/:webhookId`, `…/test`, `…/rotate-secret`, `…/deliveries` | Signed outgoing webhooks (owner only)                                                                                        |
+| `GET /embed/:slug`, `GET /embed/:slug/v/:version`                                                           | Public JSON with `pageUrl` (`?token=` for private; `?include=fallback` adds `fallbackHtml`, the no-JS event list)            |
+| `GET /media-proxy?url=`                                                                                     | Allowlisted image proxy                                                                                                      |
+| `GET /ai/status`                                                                                            | Returns provider readiness, today's request/token usage, and active quotas                                                   |
+| `POST /ai/extract`                                                                                          | Extracts dated event candidates (with citations & `sourceText`) from text, multipart file, or allowlisted URL                |
+| `POST /ai/summarize`                                                                                        | Suggests a concise event description summary (`editor` role if `projectId` supplied)                                         |
+| `POST /ai/alt-text`                                                                                         | Suggests accessibility alt text from `imageDataUrl`, `/media/...` key, or allowlisted `https://` URL                         |
+| `POST /ai/normalize-date`                                                                                   | Deterministic date parser with optional LLM fallback                                                                         |
+| `POST /ai/detect-conflicts`                                                                                 | Deterministic structural checks plus optional LLM semantic contradiction analysis (`viewer`+ if `projectId`)                 |
 
 Public, outside `/api/v1`: `GET /timeline/:slug[/v/:version]` (server-rendered page), `GET /embed.js` (web component), `GET /media/…`, `GET /healthz`.
 
@@ -127,6 +131,6 @@ AI features are **off by default** (`AI_PROVIDER=none`) and strictly human-in-th
 
 ## Not yet included
 
-- GraphQL (REST covers the editor and integrations; subscriptions belong with real-time collaboration in Phase 6).
+- GraphQL (REST and the collaboration WebSocket cover current clients).
 - Email: password reset and invitations for people without an account.
 - A Docker image.

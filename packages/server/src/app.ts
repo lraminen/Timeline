@@ -31,6 +31,7 @@ import { aiRoutes } from './routes/ai.js';
 import { collabRoutes } from './routes/collab.js';
 import { commentRoutes } from './routes/comments.js';
 import { webhookRoutes } from './routes/webhooks.js';
+import { exportRoutes } from './routes/export.js';
 import { CollabService } from './services/collab.js';
 import { WebhookService } from './services/webhooks.js';
 
@@ -272,6 +273,7 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
       await api.register(collabRoutes);
       await api.register(commentRoutes);
       await api.register(webhookRoutes);
+      await api.register(exportRoutes);
     },
     { prefix: '/api/v1' },
   );

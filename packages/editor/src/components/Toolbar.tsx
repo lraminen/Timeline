@@ -175,7 +175,7 @@ export function Toolbar({
   onOpenFromServer,
 }: {
   onImport: () => void;
-  onExport: (format: 'json' | 'csv') => void;
+  onExport: (format: 'json' | 'csv' | 'site') => void;
   onNewTimeline: () => void;
   onOpenDrafts: () => void;
   onPublish: () => void;
@@ -327,6 +327,14 @@ export function Toolbar({
                 }}
               >
                 CSV (events, for spreadsheets)
+              </DropdownMenu.Item>
+              <DropdownMenu.Item
+                className={menuItem}
+                onSelect={() => {
+                  onExport('site');
+                }}
+              >
+                Static site (.zip, works offline)
               </DropdownMenu.Item>
             </DropdownMenu.Content>
           </DropdownMenu.Portal>
